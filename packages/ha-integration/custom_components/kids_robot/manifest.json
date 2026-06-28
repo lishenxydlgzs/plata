@@ -1,0 +1,10 @@
+{
+  "domain": "kids_robot",
+  "name": "Kids Robot Conversation Agent",
+  "version": "0.1.0",
+  "documentation": "",
+  "dependencies": ["conversation"],
+  "codeowners": [],
+  "iot_class": "local_polling",
+  "integration_type": "service"
+}
