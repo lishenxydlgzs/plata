@@ -1,10 +1,19 @@
 """FastAPI application for the kids robot conversation agent."""
 
 import logging
+import os
+from logging.handlers import TimedRotatingFileHandler
+from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from dotenv import load_dotenv
 
-from .context import ContextStore
+load_dotenv()
+
+from fastapi import FastAPI
+
+from contextlib import asynccontextmanager
+
+from .context import ConversationDB
 from .models import (
     ConversationMode,
     ConversationRequest,
@@ -13,25 +22,48 @@ from .models import (
 )
 from .router import MessageRouter
 
+LOG_DIR = Path(os.environ.get("LOG_DIR", "/home/lishenxydlgzs/logs/agent-server"))
+
+handlers: list[logging.Handler] = [logging.StreamHandler()]
+try:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    handlers.append(
+        TimedRotatingFileHandler(
+            LOG_DIR / "agent-server.log",
+            when="midnight",
+            backupCount=7,
+        )
+    )
+except OSError:
+    pass
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    handlers=handlers,
 )
 logger = logging.getLogger(__name__)
 
-app = FastAPI(title="Kids Robot Agent Server", version="0.1.0")
+conversation_db = ConversationDB()
+message_router = MessageRouter(conversation_db)
 
-context_store = ContextStore()
-message_router = MessageRouter(context_store)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await conversation_db.connect()
+    yield
+    await conversation_db.close()
+
+
+app = FastAPI(title="Kids Robot Agent Server", version="0.1.0", lifespan=lifespan)
 
 
 @app.post("/conversation", response_model=ConversationResponse)
 async def conversation(request: ConversationRequest) -> ConversationResponse:
     logger.info(
-        "Incoming: text=%r conversation_id=%s mode=%s",
+        "Incoming: text=%r conversation_id=%s",
         request.text,
         request.conversation_id,
-        context_store.get_or_create(request.conversation_id).mode,
     )
     try:
         response = await message_router.route(request)
@@ -42,18 +74,8 @@ async def conversation(request: ConversationRequest) -> ConversationResponse:
             mode=ConversationMode.CHAT,
             continue_conversation=False,
         )
-    logger.info("Reply: text=%r mode=%s", response.reply_text, response.mode)
+    logger.info("Reply: text=%r", response.reply_text)
     return response
-
-
-@app.post("/mode/{mode_name}/start", response_model=ConversationResponse)
-async def start_mode(mode_name: str, request: ConversationRequest) -> ConversationResponse:
-    try:
-        mode = ConversationMode(mode_name)
-    except ValueError:
-        raise HTTPException(status_code=400, detail=f"Unknown mode: {mode_name}")
-    context_store.set_mode(request.conversation_id, mode)
-    return await message_router.route(request)
 
 
 @app.post("/hardware/button", response_model=ConversationResponse)
@@ -69,7 +91,4 @@ async def health() -> HealthResponse:
 
 @app.get("/status")
 async def status() -> dict:
-    return {
-        "status": "running",
-        "active_conversations": len(context_store._contexts),
-    }
+    return {"status": "running"}

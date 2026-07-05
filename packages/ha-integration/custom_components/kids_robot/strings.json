@@ -1,0 +1,17 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Connect to Kids Robot Agent Server",
+        "data": {
+          "backend_url": "Backend server URL",
+          "timeout": "Request timeout (seconds)",
+          "default_mode": "Default conversation mode"
+        }
+      }
+    },
+    "error": {
+      "cannot_connect": "Cannot reach the agent server. Is it running?"
+    }
+  }
+}
