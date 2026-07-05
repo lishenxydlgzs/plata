@@ -87,6 +87,52 @@ Environment variables (set in `.env`):
 | `LOG_DIR` | Log file directory | `/home/lishenxydlgzs/logs/agent-server` |
 | `DB_DIR` | SQLite database directory | `/home/lishenxydlgzs/data/agent-server` |
 
+## Home Assistant integration setup
+
+The custom integration registers Plata as a conversation agent in Home Assistant, bridging the voice pipeline to the agent server.
+
+### Install the component
+
+Copy the custom component to your HA config directory:
+
+```bash
+cp -r packages/ha-integration/custom_components/kids_robot /path/to/homeassistant/custom_components/
+```
+
+Or use the deploy script which handles this automatically:
+
+```bash
+./scripts/deploy.sh --ha
+```
+
+### Configure in HA
+
+1. Restart Home Assistant
+2. Go to **Settings → Devices & Services → Add Integration**
+3. Search for "Kids Robot"
+4. Enter the configuration:
+   - **Backend URL** — `http://<pi-ip>:8200` (default: `http://localhost:8200`)
+   - **Timeout** — seconds to wait for a response (default: 10)
+   - **Default mode** — conversation mode (default: chat)
+5. The integration validates connectivity by calling the `/health` endpoint
+
+### Assign to a voice assistant
+
+1. Go to **Settings → Voice Assistants**
+2. Select your assistant (or create a new one)
+3. Set **Conversation agent** to "Kids Robot"
+4. Assign the assistant to your Voice PE device under **Settings → Devices → Home Assistant Voice → Configure**
+
+### How it works
+
+```
+User speaks → Voice PE → HA STT (Faster Whisper) → Kids Robot conversation agent
+    → HTTP POST to agent server /conversation → Gemini generates reply
+    → reply text returned to HA → TTS (Piper) → Voice PE speaker
+```
+
+The integration forwards the transcribed text along with a conversation ID to the agent server and returns the reply text for TTS synthesis.
+
 ## License
 
 Private project.
