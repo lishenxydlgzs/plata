@@ -48,7 +48,7 @@ async def generate(system_prompt: str, conversation_history: list[dict], user_te
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
-                max_output_tokens=150,
+                max_output_tokens=80,
                 temperature=0.7,
             ),
         )

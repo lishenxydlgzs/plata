@@ -4,7 +4,15 @@
       "Bash(chmod +x *)",
       "Bash(git init *)",
       "Bash(git add *)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(/Users/sshli/rasp-workspace/scripts/sync-to-robot.sh *)",
+      "Bash(ssh lishenxydlgzs@192.168.68.60 \"cd /home/lishenxydlgzs/agent-server && python3 -m venv .venv && source .venv/bin/activate && pip install -e packages/agent-server\")",
+      "Bash(ssh *)",
+      "Bash(curl *)",
+      "Bash(python3 -m json.tool)",
+      "Bash(./scripts/deploy.sh *)",
+      "Bash(./scripts/sync-to-robot.sh *)",
+      "mcp__work-from-slack__slack_load_channel"
     ]
   }
 }

@@ -5,7 +5,7 @@ __pycache__/
 dist/
 build/
 .venv/
-.env
+.env*
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/

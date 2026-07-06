@@ -55,6 +55,10 @@ The Gemini API key is on a free tier with a 15 RPM limit. When testing or debugg
 
 Place design documents in `dev-docs/design/`. One doc per feature, written before implementation.
 
+## Issue tracking
+
+Track known bugs, workarounds, and upstream issues in `dev-docs/issues/`. One file per issue. Update status when resolved.
+
 ## Requirements tracking
 
 `dev-docs/requirements.md` is the source of truth for feature status. When developing:
