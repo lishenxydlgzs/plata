@@ -11,8 +11,10 @@ from homeassistant.data_entry_flow import FlowResult
 from .const import (
     CONF_BACKEND_URL,
     CONF_DEFAULT_MODE,
+    CONF_MEDIA_PLAYER_ENTITY_ID,
     CONF_TIMEOUT,
     DEFAULT_BACKEND_URL,
+    DEFAULT_MEDIA_PLAYER_ENTITY_ID,
     DEFAULT_MODE,
     DEFAULT_TIMEOUT,
     DOMAIN,
@@ -25,6 +27,9 @@ DATA_SCHEMA = vol.Schema(
         vol.Optional(CONF_DEFAULT_MODE, default=DEFAULT_MODE): vol.In(
             ["chat", "teacher", "play", "parent"]
         ),
+        vol.Optional(
+            CONF_MEDIA_PLAYER_ENTITY_ID, default=DEFAULT_MEDIA_PLAYER_ENTITY_ID
+        ): str,
     }
 )
 

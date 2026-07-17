@@ -9,6 +9,7 @@ set -euo pipefail
 REMOTE="lishenxydlgzs@192.168.68.60"
 REMOTE_AGENT="/home/lishenxydlgzs/agent-server"
 REMOTE_HA_COMPONENTS="/home/lishenxydlgzs/homeassistant/custom_components"
+REMOTE_HA_MEDIA="/home/lishenxydlgzs/homeassistant/media/kids_robot"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
 UPDATE_HA=false
@@ -40,6 +41,7 @@ RESTART
 
 if [ "$UPDATE_HA" = true ]; then
     echo "=== Updating HA integration ==="
+    ssh "$REMOTE" "mkdir -p $REMOTE_HA_MEDIA"
     ssh "$REMOTE" "cp -r $REMOTE_AGENT/packages/ha-integration/custom_components/kids_robot $REMOTE_HA_COMPONENTS/"
 
     echo "=== Restarting Home Assistant ==="

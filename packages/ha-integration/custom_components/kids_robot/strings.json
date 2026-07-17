@@ -6,7 +6,8 @@
         "data": {
           "backend_url": "Backend server URL",
           "timeout": "Request timeout (seconds)",
-          "default_mode": "Default conversation mode"
+          "default_mode": "Default conversation mode",
+          "media_player_entity_id": "Media player entity"
         }
       }
     },

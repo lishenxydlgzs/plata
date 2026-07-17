@@ -61,6 +61,72 @@ What the deploy script does:
 
 Use `--ha` only when you've modified files in `packages/ha-integration/`.
 
+## Adding songs or media files
+
+Playable media files live on the Home Assistant host:
+
+```text
+/home/lishenxydlgzs/homeassistant/media/kids_robot/
+```
+
+Use simple filenames with no spaces when possible:
+
+```text
+twinkle-twinkle.mp3
+wheels-on-the-bus.mp3
+bingo.mp4
+```
+
+Upload a file from your local machine:
+
+```bash
+scp "twinkle-twinkle.mp3" \
+  lishenxydlgzs@192.168.68.60:/home/lishenxydlgzs/homeassistant/media/kids_robot/twinkle-twinkle.mp3
+```
+
+Then add a matching entry to `packages/agent-server/src/agent_server/media_catalog.json`:
+
+```json
+{
+  "id": "twinkle_twinkle",
+  "title": "Twinkle Twinkle Little Star",
+  "description": "A gentle children's song about a little star.",
+  "aliases": ["twinkle twinkle", "little star", "twinkle twinkle little star"],
+  "file": "twinkle-twinkle.mp3",
+  "media_content_type": "music"
+}
+```
+
+Field notes:
+- `id` must be unique and stable; use lowercase snake_case.
+- `title` is what Plata says back before playback.
+- `description` helps the LLM choose the right file for fuzzy requests.
+- `aliases` are direct phrases that should work without an LLM call.
+- `file` must exactly match the filename in the HA media folder, including case.
+- `media_content_type` is usually `music`; for video targets you can try `video`, but the Voice PE is primarily an audio playback device.
+
+Deploy catalog changes with the regular agent-server deploy:
+
+```bash
+./scripts/deploy.sh
+```
+
+Use `--ha` only if you changed Home Assistant integration code. Adding media files or catalog entries does not require `--ha`.
+
+Test the catalog entry without using the Voice PE:
+
+```bash
+ssh lishenxydlgzs@192.168.68.60 "curl -s -X POST http://127.0.0.1:8200/conversation \
+  -H 'Content-Type: application/json' \
+  -d '{\"text\":\"play twinkle twinkle\",\"conversation_id\":\"media-test\",\"language\":\"en\",\"source\":\"manual\"}'"
+```
+
+The response should include a `media_player.play_media` action with a `media_content_id` like:
+
+```text
+media-source://media_source/local/kids_robot/twinkle-twinkle.mp3
+```
+
 ## Remote Pi details
 
 | Item | Value |

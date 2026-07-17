@@ -20,8 +20,10 @@ from homeassistant.helpers.intent import IntentResponse
 
 from .const import (
     CONF_BACKEND_URL,
+    CONF_MEDIA_PLAYER_ENTITY_ID,
     CONF_TIMEOUT,
     DEFAULT_BACKEND_URL,
+    DEFAULT_MEDIA_PLAYER_ENTITY_ID,
     DEFAULT_TIMEOUT,
     DOMAIN,
 )
@@ -29,6 +31,12 @@ from .const import (
 _LOGGER = logging.getLogger(__name__)
 
 FALLBACK_RESPONSE = "Oops, I can't think right now. Try again in a moment!"
+ALLOWED_MEDIA_PLAYER_SERVICES = {
+    "play_media",
+    "media_stop",
+    "media_pause",
+    "media_play",
+}
 
 
 async def async_setup_entry(
@@ -54,6 +62,9 @@ class KidsRobotConversationEntity(ConversationEntity):
             CONF_BACKEND_URL, DEFAULT_BACKEND_URL
         )
         self._timeout = config_entry.data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
+        self._media_player_entity_id = config_entry.data.get(
+            CONF_MEDIA_PLAYER_ENTITY_ID, DEFAULT_MEDIA_PLAYER_ENTITY_ID
+        )
 
     @property
     def supported_languages(self) -> list[str]:
@@ -73,10 +84,13 @@ class KidsRobotConversationEntity(ConversationEntity):
         }
 
         try:
-            reply_text = await self._call_backend(payload)
+            backend_response = await self._call_backend(payload)
         except Exception:
             _LOGGER.exception("Failed to get response from agent server")
-            reply_text = FALLBACK_RESPONSE
+            backend_response = {"reply_text": FALLBACK_RESPONSE, "actions": []}
+
+        reply_text = backend_response.get("reply_text", FALLBACK_RESPONSE)
+        await self._execute_actions(backend_response.get("actions", []))
 
         response = IntentResponse(language=user_input.language or "en")
         response.async_set_speech(reply_text)
@@ -86,8 +100,8 @@ class KidsRobotConversationEntity(ConversationEntity):
             conversation_id=user_input.conversation_id,
         )
 
-    async def _call_backend(self, payload: dict[str, Any]) -> str:
-        """Call the agent server and return the reply text."""
+    async def _call_backend(self, payload: dict[str, Any]) -> dict[str, Any]:
+        """Call the agent server and return the response body."""
         url = f"{self._backend_url}/conversation"
         timeout = aiohttp.ClientTimeout(total=self._timeout)
 
@@ -99,7 +113,38 @@ class KidsRobotConversationEntity(ConversationEntity):
                         resp.status,
                         await resp.text(),
                     )
-                    return FALLBACK_RESPONSE
+                    return {"reply_text": FALLBACK_RESPONSE, "actions": []}
 
-                data = await resp.json()
-                return data.get("reply_text", FALLBACK_RESPONSE)
+                return await resp.json()
+
+    async def _execute_actions(self, actions: list[dict[str, Any]]) -> None:
+        """Execute supported Home Assistant actions from the agent server."""
+        for action in actions:
+            if action.get("type") != "ha_service":
+                _LOGGER.warning("Ignoring unsupported action type: %s", action)
+                continue
+
+            data = action.get("data") or {}
+            domain = data.get("domain")
+            service = data.get("service")
+            if (
+                domain != "media_player"
+                or service not in ALLOWED_MEDIA_PLAYER_SERVICES
+            ):
+                _LOGGER.warning("Ignoring unsupported HA service action: %s", action)
+                continue
+
+            service_data = dict(data.get("service_data") or {})
+            service_data.setdefault(
+                "entity_id", action.get("target") or self._media_player_entity_id
+            )
+
+            try:
+                await self.hass.services.async_call(
+                    domain,
+                    service,
+                    service_data,
+                    blocking=False,
+                )
+            except Exception:
+                _LOGGER.exception("Failed to execute HA service action: %s", action)

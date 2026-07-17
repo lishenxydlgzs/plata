@@ -1,5 +1,6 @@
 """LLM client for Gemini Flash."""
 
+import json
 import logging
 import os
 
@@ -58,4 +59,33 @@ async def generate(system_prompt: str, conversation_history: list[dict], user_te
         return text.strip()
     except Exception:
         logger.exception("Gemini API call failed")
+        raise
+
+
+async def generate_json(system_prompt: str, user_text: str) -> dict:
+    """Generate a small JSON object using Gemini Flash."""
+    client = get_client()
+
+    try:
+        response = await client.aio.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=[
+                types.Content(
+                    role="user",
+                    parts=[types.Part.from_text(text=user_text)],
+                )
+            ],
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                max_output_tokens=120,
+                temperature=0,
+                response_mime_type="application/json",
+            ),
+        )
+        text = response.text
+        if not text:
+            return {}
+        return json.loads(text)
+    except Exception:
+        logger.exception("Gemini JSON API call failed")
         raise

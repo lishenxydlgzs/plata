@@ -27,6 +27,9 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 packages = ["src/agent_server"]
 
+[tool.hatch.build.targets.wheel.force-include]
+"src/agent_server/media_catalog.json" = "agent_server/media_catalog.json"
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]

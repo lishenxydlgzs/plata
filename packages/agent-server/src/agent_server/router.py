@@ -3,6 +3,7 @@
 import logging
 
 from .context import ConversationDB
+from .media import media_response_for
 from .models import ConversationRequest, ConversationResponse
 from .modes.chat import ChatHandler
 
@@ -16,6 +17,8 @@ class MessageRouter:
 
     async def route(self, request: ConversationRequest) -> ConversationResponse:
         history = await self._db.get_history(request.conversation_id)
-        response = await self._handler.handle(request, history)
+        response = await media_response_for(request)
+        if response is None:
+            response = await self._handler.handle(request, history)
         await self._db.save_turn(request.conversation_id, request.text, response.reply_text)
         return response

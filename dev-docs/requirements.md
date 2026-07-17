@@ -14,6 +14,7 @@
 - [x] Graceful error fallback — returns child-friendly apology on failure
 - [x] LLM integration (Gemini 3.1 Flash Lite) — generates real responses with child-friendly system prompt
 - [x] Response brevity enforcement — system prompt constrains replies to 1-3 short sentences
+- [x] Catalog-based media playback commands — LLM selector chooses playable audio from metadata and stop audio uses response actions
 
 ### Planned
 - [ ] Child-safe content filtering — block inappropriate responses
@@ -31,13 +32,14 @@
 - [x] Backend health check during setup — validates server is reachable
 - [x] HTTP bridge to agent server — forwards text, returns speech response
 - [x] Error handling — fallback response if agent server is unreachable or returns error
+- [x] Media action handling — execute allowlisted media_player service calls on the Voice PE
 
 ### Planned
 
 - [ ] Retry policy — configurable retry on transient failures
 - [ ] Diagnostic logging level configuration
 - [ ] Pass satellite_id/device_id from HA context when available
-- [ ] Action handling — execute HA service calls returned in response actions array
+- [ ] General action handling — execute non-media HA service calls returned in response actions array
 
 ## Hardware Integration
 
@@ -54,6 +56,7 @@
 - [x] Monorepo structure — packages/agent-server, packages/ha-integration, scripts, dev-docs
 - [x] Sync script — rsync workspace to Pi (scripts/sync-to-robot.sh)
 - [x] Deploy script — sync + restart server, optionally update HA (scripts/deploy.sh)
+- [x] Media directory provisioning — HA deploy creates `/home/lishenxydlgzs/homeassistant/media/kids_robot`
 - [x] Test suite — pytest with async httpx client against FastAPI app
 
 ### Planned
