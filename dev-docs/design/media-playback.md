@@ -37,16 +37,16 @@ The HA deploy path creates this directory automatically with `./scripts/deploy.s
 
 ## Media Catalog
 
-Playable files are listed in `packages/agent-server/src/agent_server/media_catalog.json`. Each item has:
+The catalog is built dynamically by scanning the media directory at runtime. No static JSON file is needed. Each audio file found produces a catalog entry:
 
-- `id`: stable identifier the LLM selector returns
-- `title`: spoken name for the item
-- `description`: short context to help the selector choose
-- `aliases`: phrases a child or parent might say
-- `file`: filename inside `/home/lishenxydlgzs/homeassistant/media/kids_robot/`
-- `media_content_type`: Home Assistant media type, usually `music`
+- `id`: derived from the filename stem (lowercased, hyphens/spaces replaced with underscores)
+- `title`: derived from the filename stem (underscores/hyphens become spaces, title-cased)
+- `file`: the actual filename on disk
+- `media_content_type`: always `music`
 
-To add a playable file, copy the audio into the HA media directory and add a catalog entry. More specific aliases such as `bedtime story` help the selector choose the right file over broader words like `bedtime` or `story`.
+Supported extensions: `.mp3`, `.mp4`, `.wav`, `.ogg`, `.flac`, `.m4a`
+
+To add a playable file, just copy the audio into the HA media directory with a descriptive filename (e.g., `bedtime_music.mp3`, `bingo_song.mp3`). The filename becomes the title the LLM uses for matching, so name files clearly.
 
 ## Backend Behavior
 

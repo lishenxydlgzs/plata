@@ -1,5 +1,7 @@
 """Tests for the conversation API."""
 
+from pathlib import Path
+
 import pytest
 from httpx import ASGITransport, AsyncClient
 
@@ -8,7 +10,17 @@ from agent_server.app import app, conversation_db
 
 
 @pytest.fixture
-async def client():
+def media_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Create a temp media directory with test files."""
+    (tmp_path / "bedtime.mp3").write_bytes(b"fake")
+    (tmp_path / "story.mp3").write_bytes(b"fake")
+    (tmp_path / "BINGO.mp4").write_bytes(b"fake")
+    monkeypatch.setattr(media, "MEDIA_DIR", tmp_path)
+    return tmp_path
+
+
+@pytest.fixture
+async def client(media_dir):
     await conversation_db.connect()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
@@ -57,7 +69,7 @@ async def test_conversation_returns_media_play_action(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
     async def fake_generate_json(system_prompt: str, user_text: str) -> dict:
-        return {"media_id": "bedtime_music", "reason": "matched test catalog item"}
+        return {"media_id": "bedtime", "reason": "matched test catalog item"}
 
     monkeypatch.setattr(media, "generate_json", fake_generate_json)
 
@@ -70,7 +82,7 @@ async def test_conversation_returns_media_play_action(
     resp = await client.post("/conversation", json=payload)
     assert resp.status_code == 200
     data = resp.json()
-    assert data["reply_text"] == "Okay, I'll play Bedtime Music."
+    assert data["reply_text"] == "Okay, I'll play Bedtime."
     assert data["continue_conversation"] is False
     assert data["actions"] == [
         {
@@ -88,35 +100,35 @@ async def test_conversation_returns_media_play_action(
     ]
 
 
-async def test_conversation_uses_specific_media_catalog_match(
+async def test_conversation_uses_llm_selector_when_no_title_match(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
     async def fake_generate_json(system_prompt: str, user_text: str) -> dict:
-        return {"media_id": "bedtime_story", "reason": "matched exact phrase"}
+        return {"media_id": "story", "reason": "matched via LLM"}
 
     monkeypatch.setattr(media, "generate_json", fake_generate_json)
 
     payload = {
-        "text": "Please play a bedtime story",
-        "conversation_id": "test-media-specific",
+        "text": "Can you play something to listen to?",
+        "conversation_id": "test-media-llm",
         "language": "en",
         "source": "assist",
     }
     resp = await client.post("/conversation", json=payload)
     assert resp.status_code == 200
     data = resp.json()
-    assert data["reply_text"] == "Okay, I'll play Bedtime Story."
+    assert data["reply_text"] == "Okay, I'll play Story."
     assert (
         data["actions"][0]["data"]["service_data"]["media_content_id"]
         == "media-source://media_source/local/kids_robot/story.mp3"
     )
 
 
-async def test_conversation_uses_catalog_alias_without_llm(
+async def test_conversation_uses_title_match_without_llm(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
     async def fake_generate_json(system_prompt: str, user_text: str) -> dict:
-        raise AssertionError("direct catalog aliases should not call the LLM")
+        raise AssertionError("direct title match should not call the LLM")
 
     monkeypatch.setattr(media, "generate_json", fake_generate_json)
 

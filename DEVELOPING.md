@@ -10,6 +10,7 @@ plata/
 │   │   │   ├── app.py         # FastAPI app, logging, lifespan
 │   │   │   ├── router.py      # Request routing
 │   │   │   ├── llm.py         # Gemini API client
+│   │   │   ├── media.py       # Media catalog scanning + playback actions
 │   │   │   ├── context.py     # SQLite conversation store
 │   │   │   └── modes/
 │   │   │       ├── base.py    # Abstract mode handler
@@ -69,51 +70,33 @@ Playable media files live on the Home Assistant host:
 /home/lishenxydlgzs/homeassistant/media/kids_robot/
 ```
 
-Use simple filenames with no spaces when possible:
+The media catalog is built dynamically by scanning this directory at runtime. No JSON config file is needed — just drop audio files with descriptive filenames.
+
+### Naming convention
+
+The filename becomes the title the LLM uses for matching, so name files clearly:
 
 ```text
-twinkle-twinkle.mp3
-wheels-on-the-bus.mp3
-bingo.mp4
+bedtime_music.mp3       → title: "Bedtime Music"
+twinkle-twinkle.mp3     → title: "Twinkle Twinkle"
+wheels_on_the_bus.mp3   → title: "Wheels On The Bus"
+bingo.mp4               → title: "Bingo"
 ```
 
-Upload a file from your local machine:
+- Use underscores or hyphens to separate words (both work)
+- Avoid spaces in filenames
+- Supported formats: `.mp3`, `.mp4`, `.wav`, `.ogg`, `.flac`, `.m4a`
+
+### Upload a file
 
 ```bash
-scp "twinkle-twinkle.mp3" \
-  lishenxydlgzs@192.168.68.60:/home/lishenxydlgzs/homeassistant/media/kids_robot/twinkle-twinkle.mp3
+scp "twinkle_twinkle.mp3" \
+  lishenxydlgzs@192.168.68.60:/home/lishenxydlgzs/homeassistant/media/kids_robot/
 ```
 
-Then add a matching entry to `packages/agent-server/src/agent_server/media_catalog.json`:
+No deploy needed — the server scans the directory on each request. The new file is available immediately.
 
-```json
-{
-  "id": "twinkle_twinkle",
-  "title": "Twinkle Twinkle Little Star",
-  "description": "A gentle children's song about a little star.",
-  "aliases": ["twinkle twinkle", "little star", "twinkle twinkle little star"],
-  "file": "twinkle-twinkle.mp3",
-  "media_content_type": "music"
-}
-```
-
-Field notes:
-- `id` must be unique and stable; use lowercase snake_case.
-- `title` is what Plata says back before playback.
-- `description` helps the LLM choose the right file for fuzzy requests.
-- `aliases` are direct phrases that should work without an LLM call.
-- `file` must exactly match the filename in the HA media folder, including case.
-- `media_content_type` is usually `music`; for video targets you can try `video`, but the Voice PE is primarily an audio playback device.
-
-Deploy catalog changes with the regular agent-server deploy:
-
-```bash
-./scripts/deploy.sh
-```
-
-Use `--ha` only if you changed Home Assistant integration code. Adding media files or catalog entries does not require `--ha`.
-
-Test the catalog entry without using the Voice PE:
+### Test a media request
 
 ```bash
 ssh lishenxydlgzs@192.168.68.60 "curl -s -X POST http://127.0.0.1:8200/conversation \
@@ -124,7 +107,7 @@ ssh lishenxydlgzs@192.168.68.60 "curl -s -X POST http://127.0.0.1:8200/conversat
 The response should include a `media_player.play_media` action with a `media_content_id` like:
 
 ```text
-media-source://media_source/local/kids_robot/twinkle-twinkle.mp3
+media-source://media_source/local/kids_robot/twinkle_twinkle.mp3
 ```
 
 ## Remote Pi details
