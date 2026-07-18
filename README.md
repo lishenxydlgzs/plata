@@ -133,6 +133,19 @@ User speaks → Voice PE → HA STT (Faster Whisper) → Kids Robot conversation
 
 The integration forwards the transcribed text along with a conversation ID to the agent server and returns the reply text for TTS synthesis.
 
+## Adding media files
+
+Plata can play audio files on command. Drop files into the media directory on the Pi:
+
+```bash
+scp bedtime_music.mp3 \
+  lishenxydlgzs@192.168.68.60:/home/lishenxydlgzs/homeassistant/media/kids_robot/
+```
+
+No restart needed — the server scans the folder on each request. The filename becomes the title used for matching (e.g., `bedtime_music.mp3` → "Bedtime Music"), so name files descriptively. Supported formats: `.mp3`, `.mp4`, `.wav`, `.ogg`, `.flac`, `.m4a`.
+
+See [DEVELOPING.md](./DEVELOPING.md#adding-songs-or-media-files) for more details.
+
 ## License
 
 Private project.
