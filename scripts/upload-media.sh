@@ -6,8 +6,18 @@
 
 set -euo pipefail
 
-REMOTE="lishenxydlgzs@192.168.68.60"
-REMOTE_MEDIA="/home/lishenxydlgzs/homeassistant/media/kids_robot"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Load environment
+if [ -f "$WORKSPACE_ROOT/.env" ]; then
+  set -a; source "$WORKSPACE_ROOT/.env"; set +a
+fi
+
+REMOTE_USER="${REMOTE_USER:-lishenxydlgzs}"
+REMOTE_HOST="${REMOTE_HOST:-192.168.68.60}"
+REMOTE="$REMOTE_USER@$REMOTE_HOST"
+REMOTE_MEDIA="/home/$REMOTE_USER/homeassistant/media/kids_robot"
 SUPPORTED_EXTENSIONS="mp3 mp4 wav ogg flac m4a"
 
 normalize_name() {

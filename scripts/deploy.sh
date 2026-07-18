@@ -6,11 +6,21 @@
 
 set -euo pipefail
 
-REMOTE="lishenxydlgzs@192.168.68.60"
-REMOTE_AGENT="/home/lishenxydlgzs/agent-server"
-REMOTE_HA_COMPONENTS="/home/lishenxydlgzs/homeassistant/custom_components"
-REMOTE_HA_MEDIA="/home/lishenxydlgzs/homeassistant/media/kids_robot"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+WORKSPACE_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Load environment
+if [ -f "$WORKSPACE_ROOT/.env" ]; then
+  set -a; source "$WORKSPACE_ROOT/.env"; set +a
+fi
+
+REMOTE_USER="${REMOTE_USER:-lishenxydlgzs}"
+REMOTE_HOST="${REMOTE_HOST:-192.168.68.60}"
+REMOTE="$REMOTE_USER@$REMOTE_HOST"
+REMOTE_HOME="/home/$REMOTE_USER"
+REMOTE_AGENT="$REMOTE_HOME/agent-server"
+REMOTE_HA_COMPONENTS="$REMOTE_HOME/homeassistant/custom_components"
+REMOTE_HA_MEDIA="$REMOTE_HOME/homeassistant/media/kids_robot"
 
 UPDATE_HA=false
 if [[ "${1:-}" == "--ha" ]]; then
@@ -21,10 +31,10 @@ echo "=== Syncing workspace ==="
 "$SCRIPT_DIR/sync-to-robot.sh"
 
 echo "=== Restarting agent server ==="
-ssh "$REMOTE" bash -s <<'RESTART'
+ssh "$REMOTE" bash -s <<RESTART
 pkill -f 'python -m agent_server' || true
 sleep 2
-cd /home/lishenxydlgzs/agent-server
+cd $REMOTE_AGENT
 source .venv/bin/activate
 nohup python -m agent_server > /dev/null 2>&1 &
 disown
@@ -35,7 +45,7 @@ for i in 1 2 3 4 5 6; do
         exit 0
     fi
 done
-echo "Agent server: FAILED to start — check /home/lishenxydlgzs/logs/agent-server/agent-server.log"
+echo "Agent server: FAILED to start — check $REMOTE_HOME/logs/agent-server/agent-server.log"
 exit 1
 RESTART
 

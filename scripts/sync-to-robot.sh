@@ -4,9 +4,17 @@
 
 set -euo pipefail
 
-REMOTE_DEST="lishenxydlgzs@192.168.68.60:/home/lishenxydlgzs/agent-server"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(dirname "$SCRIPT_DIR")"
+
+# Load environment
+if [ -f "$WORKSPACE_ROOT/.env" ]; then
+  set -a; source "$WORKSPACE_ROOT/.env"; set +a
+fi
+
+REMOTE_USER="${REMOTE_USER:-lishenxydlgzs}"
+REMOTE_HOST="${REMOTE_HOST:-192.168.68.60}"
+REMOTE_DEST="$REMOTE_USER@$REMOTE_HOST:/home/$REMOTE_USER/agent-server"
 
 EXCLUDES=(
     --exclude='.git'
