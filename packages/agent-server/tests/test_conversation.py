@@ -124,11 +124,11 @@ async def test_conversation_uses_llm_selector_when_no_title_match(
     )
 
 
-async def test_conversation_uses_title_match_without_llm(
+async def test_conversation_uses_llm_for_title_match(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
     async def fake_generate_json(system_prompt: str, user_text: str) -> dict:
-        raise AssertionError("direct title match should not call the LLM")
+        return {"media_id": "bingo", "reason": "user asked for bingo"}
 
     monkeypatch.setattr(media, "generate_json", fake_generate_json)
 

@@ -113,25 +113,8 @@ def _media_play_response(item: dict[str, Any]) -> ConversationResponse:
     )
 
 
-def _looks_like_media_request(text: str, catalog: list[dict[str, Any]]) -> bool:
-    if any(word in text for word in MEDIA_WORDS):
-        return True
-
-    for item in catalog:
-        searchable = f"{item['id']} {item['title']}".lower()
-        for token in text.split():
-            if len(token) >= 4 and token in searchable:
-                return True
-
-    return False
-
-
-def _catalog_title_match(text: str, catalog: list[dict[str, Any]]) -> dict[str, Any] | None:
-    for item in catalog:
-        if item["title"].lower() in text:
-            return item
-
-    return None
+def _looks_like_media_request(text: str) -> bool:
+    return any(word in text for word in MEDIA_WORDS)
 
 
 async def media_response_for(request: ConversationRequest) -> ConversationResponse | None:
@@ -144,12 +127,8 @@ async def media_response_for(request: ConversationRequest) -> ConversationRespon
         return _media_stop_response()
 
     catalog = get_media_catalog()
-    if not catalog or not _looks_like_media_request(text, catalog):
+    if not catalog or not _looks_like_media_request(text):
         return None
-
-    direct_match = _catalog_title_match(text, catalog)
-    if direct_match is not None:
-        return _media_play_response(direct_match)
 
     selector_input = json.dumps(
         {
