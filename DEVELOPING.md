@@ -158,6 +158,63 @@ The Gemini API key is on a free tier with limited RPM. When testing:
 3. Update `dev-docs/requirements.md` to reflect the new status
 4. Run tests, deploy, and verify on the Pi
 
+## Troubleshooting
+
+### Bot not responding to voice at all
+
+**Symptoms:** Speaking to the Voice PE does nothing — no acknowledgment, no response.
+
+**Check agent server:**
+```bash
+curl -s http://192.168.68.60:8200/health
+```
+If this fails, the server is down. Restart with `./scripts/deploy.sh`.
+
+**Check HA logs for voice pipeline activity:**
+```bash
+ssh lishenxydlgzs@192.168.68.60 "docker logs homeassistant --since 5m 2>&1 | grep -i 'voice\|wake\|stt\|conversation\|kids_robot'"
+```
+
+If no pipeline logs appear, the Voice PE isn't sending audio to HA. Power cycle the device (unplug 10+ seconds).
+
+### Bot hears you but doesn't speak back
+
+**Symptoms:** Agent server logs show incoming requests and replies, but no audio plays from the Voice PE.
+
+**Look for speaker errors in HA logs:**
+```bash
+ssh lishenxydlgzs@192.168.68.60 "docker logs homeassistant --since 30m 2>&1 | grep -i '09fe19'"
+```
+
+Common indicators:
+- `speaker_source.media_player took a long time for an operation` — speaker pipeline stuck
+- `Error unloading entry... Config entry was never loaded!` — assist_satellite in broken state
+- `i2s_audio.speaker: Driver failed to start` / `Parent bus is busy` — hardware audio driver stuck
+
+**Fix:** Restart Home Assistant:
+```bash
+ssh lishenxydlgzs@192.168.68.60 "docker restart homeassistant"
+```
+Takes ~30s to come back up. If it persists after restart, power cycle the Voice PE.
+
+### Agent server dies silently
+
+The server runs via `nohup` and has no auto-restart. If it crashes (OOM, unhandled exception), it stays dead until redeployed.
+
+**Check if running:**
+```bash
+ssh lishenxydlgzs@192.168.68.60 "ps aux | grep agent_server | grep -v grep"
+```
+
+**Check crash logs:**
+```bash
+ssh lishenxydlgzs@192.168.68.60 "tail -50 /home/lishenxydlgzs/logs/agent-server/agent-server.log"
+```
+
+**Fix:** `./scripts/deploy.sh` (syncs and restarts).
+
+**Permanent fix:** Set up a systemd service for auto-restart on crash/reboot (see deploy docs).
+
 ## Architecture notes
 
 **Single mode design** — The agent uses one LLM call per request with a system prompt that adapts tone based on context (child vs. parent, play vs. learn). Earlier multi-mode routing was removed in favor of letting the LLM handle tone-switching naturally.

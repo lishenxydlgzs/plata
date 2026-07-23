@@ -1,13 +1,11 @@
-"""Media catalog selection and playback response handling."""
+"""Media catalog scanning and action helpers."""
 
-import json
 import logging
 import os
 from pathlib import Path
 from typing import Any
 
-from .llm import generate_json
-from .models import Action, ConversationMode, ConversationRequest, ConversationResponse
+from .models import Action, ConversationMode, ConversationResponse
 
 logger = logging.getLogger(__name__)
 
@@ -17,28 +15,7 @@ MEDIA_DIR = Path(os.environ.get(
 MEDIA_BASE = "media-source://media_source/local/kids_robot"
 MEDIA_EXTENSIONS = {".mp3", ".mp4", ".wav", ".ogg", ".flac", ".m4a"}
 STOP_WORDS = ("stop", "pause", "quiet")
-MEDIA_WORDS = (
-    "audio",
-    "bedtime",
-    "hear",
-    "listen",
-    "lullaby",
-    "music",
-    "play",
-    "song",
-    "sound",
-    "story",
-)
-
-MEDIA_SELECTOR_PROMPT = """\
-You select local audio for a child-safe robot assistant.
-Given a user request and a JSON media catalog, return only JSON in this shape:
-{"media_id": string|null, "reason": string}
-
-Choose a media_id only when the user is asking to play, hear, listen to, start, or have an existing recording/audio/story/music played.
-Return null when the request is not about playing local media, when the request is ambiguous, or when no catalog item matches.
-Prefer the most specific matching title or alias. Never invent media ids.
-"""
+MEDIA_WORDS = ("audio", "music", "song", "sound", "story")
 
 
 def _title_from_filename(stem: str) -> str:
@@ -74,7 +51,13 @@ def get_media_catalog() -> list[dict[str, Any]]:
     return scan_media_catalog()
 
 
-def _media_stop_response() -> ConversationResponse:
+def is_stop_request(text: str) -> bool:
+    """Check if the user wants to stop/pause audio."""
+    lower = text.lower()
+    return any(w in lower for w in STOP_WORDS) and any(w in lower for w in MEDIA_WORDS)
+
+
+def media_stop_response() -> ConversationResponse:
     return ConversationResponse(
         reply_text="Okay, I'll stop the audio.",
         mode=ConversationMode.CHAT,
@@ -92,9 +75,9 @@ def _media_stop_response() -> ConversationResponse:
     )
 
 
-def _media_play_response(item: dict[str, Any]) -> ConversationResponse:
+def media_play_response(reply_text: str, item: dict[str, Any]) -> ConversationResponse:
     return ConversationResponse(
-        reply_text=f"Okay, I'll play {item['title']}.",
+        reply_text=reply_text,
         mode=ConversationMode.CHAT,
         continue_conversation=False,
         actions=[
@@ -111,47 +94,3 @@ def _media_play_response(item: dict[str, Any]) -> ConversationResponse:
             )
         ],
     )
-
-
-def _looks_like_media_request(text: str) -> bool:
-    return any(word in text for word in MEDIA_WORDS)
-
-
-async def media_response_for(request: ConversationRequest) -> ConversationResponse | None:
-    """Return a media action response when the user asks for playable audio."""
-    text = request.text.lower()
-
-    if any(word in text for word in STOP_WORDS) and any(
-        word in text for word in MEDIA_WORDS
-    ):
-        return _media_stop_response()
-
-    catalog = get_media_catalog()
-    if not catalog or not _looks_like_media_request(text):
-        return None
-
-    selector_input = json.dumps(
-        {
-            "user_request": request.text,
-            "media_catalog": [
-                {"id": item["id"], "title": item["title"]}
-                for item in catalog
-            ],
-        }
-    )
-
-    try:
-        selection = await generate_json(MEDIA_SELECTOR_PROMPT, selector_input)
-    except Exception:
-        return None
-
-    media_id = selection.get("media_id")
-    if media_id is None:
-        return None
-
-    for item in catalog:
-        if item["id"] == media_id:
-            return _media_play_response(item)
-
-    logger.warning("Media selector returned unknown media_id: %s", media_id)
-    return None

@@ -1,9 +1,9 @@
-"""Message router — single-mode, delegates to LLM for context-aware responses."""
+"""Message router — delegates to chat handler with integrated media selection."""
 
 import logging
 
 from .context import ConversationDB
-from .media import media_response_for
+from .media import is_stop_request, media_stop_response
 from .models import ConversationRequest, ConversationResponse
 from .modes.chat import ChatHandler
 
@@ -16,9 +16,10 @@ class MessageRouter:
         self._handler = ChatHandler()
 
     async def route(self, request: ConversationRequest) -> ConversationResponse:
-        history = await self._db.get_history(request.conversation_id)
-        response = await media_response_for(request)
-        if response is None:
+        if is_stop_request(request.text):
+            response = media_stop_response()
+        else:
+            history = await self._db.get_history(request.conversation_id)
             response = await self._handler.handle(request, history)
         await self._db.save_turn(request.conversation_id, request.text, response.reply_text)
         return response

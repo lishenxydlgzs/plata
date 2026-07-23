@@ -23,13 +23,7 @@ def get_client() -> genai.Client:
 
 
 async def generate(system_prompt: str, conversation_history: list[dict], user_text: str) -> str:
-    """Generate a response using Gemini Flash.
-
-    Args:
-        system_prompt: The system instruction for this mode.
-        conversation_history: List of {"role": "user"|"model", "text": "..."} dicts.
-        user_text: The current user message.
-    """
+    """Generate a text response using Gemini Flash."""
     client = get_client()
 
     contents = []
@@ -59,6 +53,43 @@ async def generate(system_prompt: str, conversation_history: list[dict], user_te
         return text.strip()
     except Exception:
         logger.exception("Gemini API call failed")
+        raise
+
+
+async def generate_chat_json(
+    system_prompt: str, conversation_history: list[dict], user_text: str
+) -> dict:
+    """Generate a structured JSON response with conversation history."""
+    client = get_client()
+
+    contents = []
+    for turn in conversation_history:
+        contents.append(types.Content(
+            role=turn["role"],
+            parts=[types.Part.from_text(text=turn["text"])],
+        ))
+    contents.append(types.Content(
+        role="user",
+        parts=[types.Part.from_text(text=user_text)],
+    ))
+
+    try:
+        response = await client.aio.models.generate_content(
+            model="gemini-3.1-flash-lite",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=system_prompt,
+                max_output_tokens=150,
+                temperature=0.7,
+                response_mime_type="application/json",
+            ),
+        )
+        text = response.text
+        if not text:
+            return {}
+        return json.loads(text)
+    except Exception:
+        logger.exception("Gemini chat JSON API call failed")
         raise
 
 

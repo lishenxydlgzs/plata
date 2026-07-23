@@ -1,6 +1,7 @@
 """Tests for the conversation API."""
 
 from pathlib import Path
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import ASGITransport, AsyncClient
@@ -35,7 +36,16 @@ async def test_health(client: AsyncClient):
     assert data["status"] == "ok"
 
 
-async def test_conversation_basic(client: AsyncClient):
+async def test_conversation_returns_chat_response(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    from agent_server.modes import chat
+
+    async def fake_generate_chat_json(system_prompt, history, user_text):
+        return {"reply_text": "Hello friend!", "media_id": None}
+
+    monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
+
     payload = {
         "text": "Hello!",
         "conversation_id": "test-1",
@@ -45,36 +55,24 @@ async def test_conversation_basic(client: AsyncClient):
     resp = await client.post("/conversation", json=payload)
     assert resp.status_code == 200
     data = resp.json()
-    assert "reply_text" in data
+    assert data["reply_text"] == "Hello friend!"
     assert data["mode"] == "chat"
-    assert isinstance(data["continue_conversation"], bool)
-
-
-async def test_conversation_returns_response_on_llm_failure(client: AsyncClient):
-    """When LLM fails, server still returns a valid response."""
-    payload = {
-        "text": "Tell me something fun!",
-        "conversation_id": "test-fallback",
-        "language": "en",
-        "source": "assist",
-    }
-    resp = await client.post("/conversation", json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert len(data["reply_text"]) > 0
+    assert data["actions"] == []
     assert data["continue_conversation"] is True
 
 
 async def test_conversation_returns_media_play_action(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ):
-    async def fake_generate_json(system_prompt: str, user_text: str) -> dict:
-        return {"media_id": "bedtime", "reason": "matched test catalog item"}
+    from agent_server.modes import chat
 
-    monkeypatch.setattr(media, "generate_json", fake_generate_json)
+    async def fake_generate_chat_json(system_prompt, history, user_text):
+        return {"reply_text": "Let's listen to Bedtime!", "media_id": "bedtime"}
+
+    monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
 
     payload = {
-        "text": "Please play bedtime music",
+        "text": "Play some bedtime music",
         "conversation_id": "test-media-play",
         "language": "en",
         "source": "assist",
@@ -82,7 +80,7 @@ async def test_conversation_returns_media_play_action(
     resp = await client.post("/conversation", json=payload)
     assert resp.status_code == 200
     data = resp.json()
-    assert data["reply_text"] == "Okay, I'll play Bedtime."
+    assert data["reply_text"] == "Let's listen to Bedtime!"
     assert data["continue_conversation"] is False
     assert data["actions"] == [
         {
@@ -100,54 +98,6 @@ async def test_conversation_returns_media_play_action(
     ]
 
 
-async def test_conversation_uses_llm_selector_when_no_title_match(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-):
-    async def fake_generate_json(system_prompt: str, user_text: str) -> dict:
-        return {"media_id": "story", "reason": "matched via LLM"}
-
-    monkeypatch.setattr(media, "generate_json", fake_generate_json)
-
-    payload = {
-        "text": "Can you play something to listen to?",
-        "conversation_id": "test-media-llm",
-        "language": "en",
-        "source": "assist",
-    }
-    resp = await client.post("/conversation", json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["reply_text"] == "Okay, I'll play Story."
-    assert (
-        data["actions"][0]["data"]["service_data"]["media_content_id"]
-        == "media-source://media_source/local/kids_robot/story.mp3"
-    )
-
-
-async def test_conversation_uses_llm_for_title_match(
-    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
-):
-    async def fake_generate_json(system_prompt: str, user_text: str) -> dict:
-        return {"media_id": "bingo", "reason": "user asked for bingo"}
-
-    monkeypatch.setattr(media, "generate_json", fake_generate_json)
-
-    payload = {
-        "text": "Please play bingo",
-        "conversation_id": "test-media-bingo",
-        "language": "en",
-        "source": "assist",
-    }
-    resp = await client.post("/conversation", json=payload)
-    assert resp.status_code == 200
-    data = resp.json()
-    assert data["reply_text"] == "Okay, I'll play Bingo."
-    assert (
-        data["actions"][0]["data"]["service_data"]["media_content_id"]
-        == "media-source://media_source/local/kids_robot/BINGO.mp4"
-    )
-
-
 async def test_conversation_returns_media_stop_action(client: AsyncClient):
     payload = {
         "text": "Stop the music",
@@ -160,6 +110,53 @@ async def test_conversation_returns_media_stop_action(client: AsyncClient):
     data = resp.json()
     assert data["reply_text"] == "Okay, I'll stop the audio."
     assert data["actions"][0]["data"]["service"] == "media_stop"
+
+
+async def test_conversation_fallback_on_llm_failure(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    from agent_server.modes import chat
+
+    async def fake_generate_chat_json(system_prompt, history, user_text):
+        raise RuntimeError("LLM down")
+
+    monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
+
+    payload = {
+        "text": "Tell me something fun!",
+        "conversation_id": "test-fallback",
+        "language": "en",
+        "source": "assist",
+    }
+    resp = await client.post("/conversation", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "fuzzy" in data["reply_text"]
+    assert data["continue_conversation"] is True
+
+
+async def test_conversation_unknown_media_id_falls_back_to_chat(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    from agent_server.modes import chat
+
+    async def fake_generate_chat_json(system_prompt, history, user_text):
+        return {"reply_text": "Let me play that!", "media_id": "nonexistent_song"}
+
+    monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
+
+    payload = {
+        "text": "Play something random",
+        "conversation_id": "test-unknown-media",
+        "language": "en",
+        "source": "assist",
+    }
+    resp = await client.post("/conversation", json=payload)
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["reply_text"] == "Let me play that!"
+    assert data["actions"] == []
+    assert data["continue_conversation"] is True
 
 
 async def test_status(client: AsyncClient):
