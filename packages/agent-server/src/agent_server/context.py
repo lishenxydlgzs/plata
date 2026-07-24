@@ -5,8 +5,7 @@ from pathlib import Path
 
 import aiosqlite
 
-_default_db_dir = "/home/lishenxydlgzs/data/agent-server"
-DB_DIR = Path(os.environ.get("DB_DIR", _default_db_dir))
+DB_DIR = Path(os.environ.get("DB_DIR", "./data"))
 DB_PATH = DB_DIR / "conversations.db"
 
 SCHEMA = """

@@ -22,7 +22,7 @@ from .models import (
 )
 from .router import MessageRouter
 
-LOG_DIR = Path(os.environ.get("LOG_DIR", "/home/lishenxydlgzs/logs/agent-server"))
+LOG_DIR = Path(os.environ.get("LOG_DIR", "./logs"))
 
 handlers: list[logging.Handler] = [logging.StreamHandler()]
 try:

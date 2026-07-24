@@ -6,6 +6,7 @@ dist/
 build/
 .venv/
 .env*
+!.env.example
 .mypy_cache/
 .pytest_cache/
 .ruff_cache/
@@ -13,3 +14,7 @@ node_modules/
 *.log
 .DS_Store
 .downloads/
+.claude/settings.local.json
+data/
+logs/
+media/

@@ -9,9 +9,7 @@ from .models import Action, ConversationMode, ConversationResponse
 
 logger = logging.getLogger(__name__)
 
-MEDIA_DIR = Path(os.environ.get(
-    "MEDIA_DIR", "/home/lishenxydlgzs/homeassistant/media/kids_robot"
-))
+MEDIA_DIR = Path(os.environ.get("MEDIA_DIR", "./media"))
 MEDIA_BASE = "media-source://media_source/local/kids_robot"
 MEDIA_EXTENSIONS = {".mp3", ".mp4", ".wav", ".ogg", ".flac", ".m4a"}
 STOP_WORDS = ("stop", "pause", "quiet")
