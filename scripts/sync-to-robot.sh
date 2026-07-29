@@ -18,6 +18,7 @@ REMOTE_DEST="$REMOTE_USER@$REMOTE_HOST:/home/$REMOTE_USER/agent-server"
 
 EXCLUDES=(
     --exclude='.git'
+    --exclude='.env'
     --exclude='__pycache__'
     --exclude='*.pyc'
     --exclude='.venv'
