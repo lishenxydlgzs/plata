@@ -127,17 +127,21 @@ class KidsRobotConversationEntity(ConversationEntity):
             data = action.get("data") or {}
             domain = data.get("domain")
             service = data.get("service")
-            if (
-                domain != "media_player"
-                or service not in ALLOWED_MEDIA_PLAYER_SERVICES
-            ):
+
+            # Allow media_player services and kids_robot.play_playlist
+            allowed = (
+                (domain == "media_player" and service in ALLOWED_MEDIA_PLAYER_SERVICES)
+                or (domain == DOMAIN and service == "play_playlist")
+            )
+            if not allowed:
                 _LOGGER.warning("Ignoring unsupported HA service action: %s", action)
                 continue
 
             service_data = dict(data.get("service_data") or {})
-            service_data.setdefault(
-                "entity_id", action.get("target") or self._media_player_entity_id
-            )
+            if domain == "media_player":
+                service_data.setdefault(
+                    "entity_id", action.get("target") or self._media_player_entity_id
+                )
 
             try:
                 await self.hass.services.async_call(

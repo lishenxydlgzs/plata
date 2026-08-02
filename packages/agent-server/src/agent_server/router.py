@@ -3,6 +3,7 @@
 import logging
 
 from .context import ConversationDB
+from .knowledge import KnowledgeStore
 from .media import is_stop_request, media_stop_response
 from .models import ConversationRequest, ConversationResponse
 from .modes.chat import ChatHandler
@@ -11,9 +12,10 @@ logger = logging.getLogger(__name__)
 
 
 class MessageRouter:
-    def __init__(self, conversation_db: ConversationDB) -> None:
+    def __init__(self, conversation_db: ConversationDB, knowledge: KnowledgeStore) -> None:
         self._db = conversation_db
-        self._handler = ChatHandler()
+        self._knowledge = knowledge
+        self._handler = ChatHandler(knowledge)
 
     async def route(self, request: ConversationRequest) -> ConversationResponse:
         if is_stop_request(request.text):

@@ -1,9 +1,10 @@
-"""Chat handler - single mode with integrated media selection."""
+"""Chat handler - single mode with integrated media selection and topic extraction."""
 
 import logging
 
+from ..knowledge import KnowledgeStore
 from ..llm import generate_chat_json
-from ..media import get_media_catalog, media_play_response
+from ..media import get_media_catalog, media_play_response, media_playlist_response
 from ..models import ConversationMode, ConversationRequest, ConversationResponse
 
 logger = logging.getLogger(__name__)
@@ -21,37 +22,57 @@ If a parent is clearly speaking (asking about routines, schedules, configuration
 be direct and practical. \
 If you don't know something, say so cheerfully.
 
+{memory_context}
+
 You have a music library. When the user asks to play, hear, or listen to something, \
-pick the best match from the list below. If no good match exists or the user isn't asking for media, \
-set media_id to null.
+pick the best match(es) from the list below. \
+If they ask for a single song, use media_ids with one item. \
+If they ask for multiple songs or a playlist (e.g. "play some bedtime music", \
+"play a few songs", "play music for a while"), pick 3-8 good matches. \
+If no good match exists or the user isn't asking for media, set media_ids to an empty list.
 
 Available media:
 {media_list}
 
 Respond ONLY with JSON in this exact shape:
-{{"reply_text": "your spoken reply here", "media_id": "id_from_list_or_null"}}
+{{"reply_text": "your spoken reply here", "media_ids": ["id1", "id2"], "topics": ["topic1", "topic2"]}}
 
-If you pick a media_id, reply_text should tell the child what you're about to play. \
-If media_id is null, reply_text is your normal conversational response.\
+If media_ids has items, reply_text should tell the child what you're about to play. \
+If media_ids is empty, reply_text is your normal conversational response.
+
+topics: list 0-3 key subjects or interests the user expressed in this message \
+(e.g. "dinosaurs", "space", "bedtime"). Only include clear topics, not filler. \
+Empty list if the message is just a greeting or has no clear topic.\
 """
 
 FALLBACK_REPLY = "Hmm, my brain is a little fuzzy right now. Can you try again?"
 
 
-def _build_system_prompt() -> str:
+def _build_system_prompt(knowledge: KnowledgeStore) -> str:
     catalog = get_media_catalog()
     if catalog:
         media_list = "\n".join(f"- {item['id']}" for item in catalog)
     else:
         media_list = "(no media files available)"
-    return SYSTEM_PROMPT.format(media_list=media_list)
+
+    memory_context = knowledge.build_memory_prompt()
+
+    return SYSTEM_PROMPT.format(media_list=media_list, memory_context=memory_context)
 
 
 class ChatHandler:
+    def __init__(self, knowledge: KnowledgeStore) -> None:
+        self._knowledge = knowledge
+
     async def handle(
         self, request: ConversationRequest, history: list[dict]
     ) -> ConversationResponse:
-        system_prompt = _build_system_prompt()
+        system_prompt = _build_system_prompt(self._knowledge)
+        memory_context = self._knowledge.build_memory_prompt()
+        logger.info(
+            "Context: history_turns=%d memory=%r user_text=%r",
+            len(history), memory_context, request.text,
+        )
 
         try:
             result = await generate_chat_json(system_prompt, history, request.text)
@@ -64,14 +85,41 @@ class ChatHandler:
             )
 
         reply_text = result.get("reply_text") or FALLBACK_REPLY
-        media_id = result.get("media_id")
+        media_ids = result.get("media_ids") or []
+        # Backwards compat: handle old single media_id format
+        if not media_ids and result.get("media_id"):
+            media_ids = [result["media_id"]]
+        topics = result.get("topics") or []
 
-        if media_id:
-            catalog = get_media_catalog()
-            for item in catalog:
-                if item["id"] == media_id:
-                    return media_play_response(reply_text, item)
-            logger.warning("LLM returned unknown media_id: %s", media_id)
+        logger.info("LLM result: media_ids=%s topics=%r", media_ids, topics)
+
+        # Resolve media IDs against catalog
+        catalog = get_media_catalog()
+        catalog_by_id = {item["id"]: item for item in catalog}
+        resolved_items: list[dict] = []
+        for mid in media_ids:
+            if mid in catalog_by_id:
+                resolved_items.append(catalog_by_id[mid])
+            else:
+                logger.warning("LLM returned unknown media_id: %s", mid)
+
+        # Record message in knowledge graph
+        first_media_id = resolved_items[0]["id"] if resolved_items else None
+        try:
+            self._knowledge.record_message(
+                text=request.text,
+                conversation_id=request.conversation_id,
+                topics=topics,
+                media_id=first_media_id,
+            )
+        except Exception:
+            logger.exception("Failed to record message in knowledge graph")
+
+        # Return appropriate response
+        if len(resolved_items) > 1:
+            return media_playlist_response(reply_text, resolved_items)
+        elif len(resolved_items) == 1:
+            return media_play_response(reply_text, resolved_items[0])
 
         return ConversationResponse(
             reply_text=reply_text,

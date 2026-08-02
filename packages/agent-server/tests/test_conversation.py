@@ -7,7 +7,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from agent_server import media
-from agent_server.app import app, conversation_db
+from agent_server.app import app, conversation_db, knowledge_store
 
 
 @pytest.fixture
@@ -23,6 +23,7 @@ def media_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 @pytest.fixture
 async def client(media_dir):
     await conversation_db.connect()
+    knowledge_store.connect()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c

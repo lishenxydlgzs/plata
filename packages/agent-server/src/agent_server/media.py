@@ -92,3 +92,25 @@ def media_play_response(reply_text: str, item: dict[str, Any]) -> ConversationRe
             )
         ],
     )
+
+
+def media_playlist_response(reply_text: str, items: list[dict[str, Any]]) -> ConversationResponse:
+    """Build a response that plays multiple tracks sequentially."""
+    tracks = [f"{MEDIA_BASE}/{item['file']}" for item in items]
+    return ConversationResponse(
+        reply_text=reply_text,
+        mode=ConversationMode.CHAT,
+        continue_conversation=False,
+        actions=[
+            Action(
+                type="ha_service",
+                data={
+                    "domain": "kids_robot",
+                    "service": "play_playlist",
+                    "service_data": {
+                        "tracks": tracks,
+                    },
+                },
+            )
+        ],
+    )

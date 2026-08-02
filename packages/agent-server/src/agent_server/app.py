@@ -14,6 +14,7 @@ from fastapi import FastAPI
 from contextlib import asynccontextmanager
 
 from .context import ConversationDB
+from .knowledge import KnowledgeStore
 from .models import (
     ConversationMode,
     ConversationRequest,
@@ -45,12 +46,15 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 conversation_db = ConversationDB()
-message_router = MessageRouter(conversation_db)
+knowledge_store = KnowledgeStore()
+message_router = MessageRouter(conversation_db, knowledge_store)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     await conversation_db.connect()
+    knowledge_store.connect()
+    knowledge_store.sync_media_catalog()
     yield
     await conversation_db.close()
 

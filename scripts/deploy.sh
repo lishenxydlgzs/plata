@@ -30,6 +30,13 @@ fi
 echo "=== Syncing workspace ==="
 "$SCRIPT_DIR/sync-to-robot.sh"
 
+echo "=== Installing packages ==="
+ssh "$REMOTE" bash -s <<INSTALL
+cd $REMOTE_AGENT
+source .venv/bin/activate
+pip install -e packages/ontology -e packages/agent-server --quiet 2>&1 | tail -3
+INSTALL
+
 echo "=== Restarting agent server ==="
 ssh "$REMOTE" bash -s <<RESTART
 pkill -f 'python -m agent_server' || true
