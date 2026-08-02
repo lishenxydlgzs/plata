@@ -15,6 +15,8 @@
 - [x] LLM integration (Gemini 3.1 Flash Lite) — generates real responses with child-friendly system prompt
 - [x] Response brevity enforcement — system prompt constrains replies to 1-3 short sentences
 - [x] Catalog-based media playback commands — LLM selector chooses playable audio from metadata and stop audio uses response actions
+- [x] Playlist playback — LLM can pick multiple tracks; HA integration plays them sequentially using state-change detection
+- [x] Knowledge graph (ontology) — tracks conversation topics and media as linked entities, feeds memory context into system prompt
 
 ### Planned
 - [ ] Child-safe content filtering — block inappropriate responses
