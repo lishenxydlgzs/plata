@@ -1,14 +1,17 @@
-"""Knowledge graph for media catalog, conversation messages, and topic memory.
+"""Knowledge graph for media catalog, conversation messages, topic memory, and facts.
 
 Graph structure:
   [message] --mentions--> [topic]
   [message] --triggered--> [media]
+  [message] --supports--> [fact]
   [media]   --about--> [topic]
 
 Messages carry timestamps, so topic frequency and recency are derived
-from traversing edges rather than stored as counters.
+from traversing edges rather than stored as counters. Facts accumulate
+confidence from multiple supporting messages.
 """
 
+import json
 import logging
 import os
 import sqlite3
@@ -29,16 +32,22 @@ ONTOLOGY_DB_PATH = DB_DIR / "ontology.db"
 MAX_INTERESTS_IN_PROMPT = 8
 
 
+FACT_CONFIDENCE_THRESHOLD = 0.7
+MAX_FACTS_IN_PROMPT = 6
+
+
 class _TypeRegistry:
     _entity_types = [
         EntityType(id="media", name="Media", properties={}, system_defined=True, created_at="", updated_at="", description="A playable audio/video file"),
         EntityType(id="topic", name="Topic", properties={}, system_defined=True, created_at="", updated_at="", description="A subject or theme"),
         EntityType(id="message", name="Message", properties={}, system_defined=True, created_at="", updated_at="", description="A user message in a conversation"),
+        EntityType(id="fact", name="Fact", properties={}, system_defined=True, created_at="", updated_at="", description="A factual statement about the family"),
     ]
     _link_types = [
         LinkType(id="about", name="About", from_entity_type="media", to_entity_type="topic", bidirectional=False, created_at=""),
         LinkType(id="mentions", name="Mentions", from_entity_type="message", to_entity_type="topic", bidirectional=False, created_at=""),
         LinkType(id="triggered", name="Triggered", from_entity_type="message", to_entity_type="media", bidirectional=False, created_at=""),
+        LinkType(id="supports", name="Supports", from_entity_type="message", to_entity_type="fact", bidirectional=False, created_at=""),
     ]
 
     def get_entity_types(self) -> list[EntityType]:
@@ -105,13 +114,15 @@ class KnowledgeStore:
 
     # ─── Messages & Topics ────────────────────────────────────────────────────
 
-    def record_message(self, text: str, conversation_id: str, topics: list[str], media_id: str | None = None) -> None:
+    def record_message(self, text: str, conversation_id: str, topics: list[str], media_id: str | None = None) -> str:
         """Record a user message and its extracted topics/media as graph nodes and edges.
 
         Creates:
           [message] --mentions--> [topic]  (for each topic)
           [message] --triggered--> [media] (if media was played)
           [media] --about--> [topic]       (links media to topics from this message)
+
+        Returns the message entity ID for linking facts.
         """
         now = datetime.now(timezone.utc).isoformat()
         msg_entity = self.store.create_entity(
@@ -138,6 +149,81 @@ class KnowledgeStore:
                 # Also link the media to topics from this message
                 for tid in topic_ids:
                     self.store.upsert_link("about", media_entity.id, tid)
+
+        return msg_entity.id
+
+    # ─── Facts ────────────────────────────────────────────────────────────────
+
+    def record_facts(self, facts: list[dict[str, Any]], message_entity_id: str) -> None:
+        """Record extracted facts and link them to the source message.
+
+        Each fact dict has: subject, relation, object, confidence.
+        Deduplicates on (subject, relation, object). If the fact already exists,
+        adds a new 'supports' edge and updates confidence.
+        """
+        for fact_data in facts:
+            subject = fact_data.get("subject", "").strip()
+            relation = fact_data.get("relation", "").strip()
+            obj = fact_data.get("object", "").strip()
+            confidence = float(fact_data.get("confidence", 0.5))
+
+            if not subject or not relation or not obj:
+                continue
+
+            fact_key = f"{subject.lower()}|{relation.lower()}|{obj.lower()}"
+            existing = self.store.get_entity_by_identifier("fact_key", fact_key)
+
+            if existing:
+                # Add supporting evidence and update confidence
+                self.store.create_link("supports", message_entity_id, existing.id)
+                old_confidence = existing.properties.get("confidence", 0.5)
+                new_confidence = old_confidence + (1 - old_confidence) * confidence * 0.3
+                self.store.update_entity(existing.id, properties={
+                    **existing.properties,
+                    "confidence": round(min(new_confidence, 0.99), 2),
+                })
+                logger.info("Fact reinforced: %r (confidence %.2f -> %.2f)", existing.name, old_confidence, new_confidence)
+            else:
+                # Create new fact entity
+                name = f"{subject} {relation.replace('_', ' ')} {obj}"
+                fact_entity = self.store.create_entity(
+                    "fact", name,
+                    properties={
+                        "subject": subject,
+                        "relation": relation,
+                        "object": obj,
+                        "confidence": round(confidence, 2),
+                    },
+                )
+                self.store.set_identifier(fact_entity.id, "fact_key", fact_key)
+                self.store.create_link("supports", message_entity_id, fact_entity.id)
+                logger.info("Fact created: %r (confidence %.2f)", name, confidence)
+
+    def get_known_facts(self, limit: int = MAX_FACTS_IN_PROMPT) -> list[dict[str, Any]]:
+        """Get high-confidence facts ranked by evidence count.
+
+        Filters by confidence threshold, ranks by number of supporting messages.
+        """
+        db = self.store._db
+        rows = db.execute("""
+            SELECT f.id, f.name, f.properties,
+                   COUNT(l.id) as evidence_count
+            FROM entities f
+            JOIN links l ON l.to_entity = f.id AND l.relationship_type = 'supports'
+            WHERE f.entity_type = 'fact'
+              AND json_extract(f.properties, '$.confidence') >= ?
+            GROUP BY f.id
+            ORDER BY evidence_count DESC
+            LIMIT ?
+        """, (FACT_CONFIDENCE_THRESHOLD, limit)).fetchall()
+        return [
+            {
+                "name": row["name"],
+                "confidence": json.loads(row["properties"]).get("confidence", 0),
+                "evidence_count": row["evidence_count"],
+            }
+            for row in rows
+        ]
 
     # ─── Memory / Context Building ───────────────────────────────────────────
 
@@ -190,9 +276,17 @@ class KnowledgeStore:
         ]
 
     def build_memory_prompt(self) -> str:
-        """Build a context string about recent interests for the system prompt."""
+        """Build a context string about known facts and recent interests for the system prompt."""
+        parts: list[str] = []
+
+        facts = self.get_known_facts()
+        if facts:
+            fact_sentences = ". ".join(f["name"] for f in facts)
+            parts.append(f"Things you know about this family: {fact_sentences}.")
+
         interests = self.get_recent_interests()
-        if not interests:
-            return ""
-        top_topics = [i["name"] for i in interests[:6]]
-        return f"Topics we've talked about recently: {', '.join(top_topics)}."
+        if interests:
+            top_topics = [i["name"] for i in interests[:6]]
+            parts.append(f"Topics we've talked about recently: {', '.join(top_topics)}.")
+
+        return "\n".join(parts)

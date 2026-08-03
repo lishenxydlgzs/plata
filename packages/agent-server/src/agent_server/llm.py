@@ -79,7 +79,7 @@ async def generate_chat_json(
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
-                max_output_tokens=150,
+                max_output_tokens=250,
                 temperature=0.7,
                 response_mime_type="application/json",
             ),

@@ -35,14 +35,31 @@ Available media:
 {media_list}
 
 Respond ONLY with JSON in this exact shape:
-{{"reply_text": "your spoken reply here", "media_ids": ["id1", "id2"], "topics": ["topic1", "topic2"]}}
+{{"reply_text": "your spoken reply here", "media_ids": ["id1", "id2"], "topics": ["topic1", "topic2"], "facts": []}}
 
 If media_ids has items, reply_text should tell the child what you're about to play. \
 If media_ids is empty, reply_text is your normal conversational response.
 
 topics: list 0-3 key subjects or interests the user expressed in this message \
 (e.g. "dinosaurs", "space", "bedtime"). Only include clear topics, not filler. \
-Empty list if the message is just a greeting or has no clear topic.\
+Empty list if the message is just a greeting or has no clear topic.
+
+facts: list 0-2 factual statements the user is telling you about themselves, their family, \
+or their world. Only include things the user EXPLICITLY stated as true — \
+NOT things you inferred or guessed. Each fact has subject, relation, object, and your \
+confidence (0.0-1.0) that the user actually stated this. \
+Format: {{"subject": "Pang Pang", "relation": "is_a", "object": "family dog", "confidence": 0.9}}
+
+Examples of GOOD fact extractions:
+- "My dog's name is Pang Pang" → {{"subject": "Pang Pang", "relation": "is_a", "object": "family dog", "confidence": 0.9}}
+- "I'm in first grade" → {{"subject": "speaker", "relation": "is_in", "object": "first grade", "confidence": 0.9}}
+- "We do CC on Tuesdays" → {{"subject": "CC", "relation": "happens_on", "object": "Tuesdays", "confidence": 0.8}}
+
+Do NOT extract facts when:
+- User asks to play music (not a fact about them)
+- User mentions a topic in passing (not an explicit statement)
+- You are guessing or inferring something not directly said
+Empty list for most messages.\
 """
 
 FALLBACK_REPLY = "Hmm, my brain is a little fuzzy right now. Can you try again?"
@@ -91,7 +108,8 @@ class ChatHandler:
             media_ids = [result["media_id"]]
         topics = result.get("topics") or []
 
-        logger.info("LLM result: media_ids=%s topics=%r", media_ids, topics)
+        facts_raw = result.get("facts") or []
+        logger.info("LLM result: media_ids=%s topics=%r facts=%r", media_ids, topics, facts_raw)
 
         # Resolve media IDs against catalog
         catalog = get_media_catalog()
@@ -105,13 +123,16 @@ class ChatHandler:
 
         # Record message in knowledge graph
         first_media_id = resolved_items[0]["id"] if resolved_items else None
+        facts = result.get("facts") or []
         try:
-            self._knowledge.record_message(
+            msg_id = self._knowledge.record_message(
                 text=request.text,
                 conversation_id=request.conversation_id,
                 topics=topics,
                 media_id=first_media_id,
             )
+            if facts:
+                self._knowledge.record_facts(facts, msg_id)
         except Exception:
             logger.exception("Failed to record message in knowledge graph")
 
