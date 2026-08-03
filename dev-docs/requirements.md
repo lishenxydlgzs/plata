@@ -17,6 +17,8 @@
 - [x] Catalog-based media playback commands — LLM selector chooses playable audio from metadata and stop audio uses response actions
 - [x] Playlist playback — LLM can pick multiple tracks; HA integration plays them sequentially using state-change detection
 - [x] Knowledge graph (ontology) — tracks conversation topics and media as linked entities, feeds memory context into system prompt
+- [x] Fact extraction with provenance — LLM extracts explicit user statements as structured facts, stored with confidence scores and linked to source messages
+- [x] Long-term memory — system prompt includes known facts and recency-weighted topics across all sessions
 
 ### Planned
 - [ ] Child-safe content filtering — block inappropriate responses
