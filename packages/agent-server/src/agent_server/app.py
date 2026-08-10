@@ -15,6 +15,7 @@ from contextlib import asynccontextmanager
 
 from .context import ConversationDB
 from .knowledge import KnowledgeStore
+from .maintenance import MaintenanceJob
 from .models import (
     ConversationMode,
     ConversationRequest,
@@ -48,6 +49,7 @@ logger = logging.getLogger(__name__)
 conversation_db = ConversationDB()
 knowledge_store = KnowledgeStore()
 message_router = MessageRouter(conversation_db, knowledge_store)
+maintenance_job = MaintenanceJob(knowledge_store)
 
 
 @asynccontextmanager
@@ -55,7 +57,9 @@ async def lifespan(app: FastAPI):
     await conversation_db.connect()
     knowledge_store.connect()
     knowledge_store.sync_media_catalog()
+    maintenance_job.start_scheduler()
     yield
+    maintenance_job.stop()
     await conversation_db.close()
 
 
@@ -96,3 +100,10 @@ async def health() -> HealthResponse:
 @app.get("/status")
 async def status() -> dict:
     return {"status": "running"}
+
+
+@app.post("/maintenance/run")
+async def run_maintenance() -> dict:
+    """Manually trigger the nightly maintenance job."""
+    result = await maintenance_job.run_now()
+    return result
