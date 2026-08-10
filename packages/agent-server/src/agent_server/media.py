@@ -15,6 +15,8 @@ MEDIA_EXTENSIONS = {".mp3", ".mp4", ".wav", ".ogg", ".flac", ".m4a"}
 STOP_WORDS = ("stop", "pause", "quiet")
 MEDIA_WORDS = ("audio", "music", "song", "sound", "story")
 
+_playlist_cache: dict[str, list[dict[str, Any]]] | None = None
+
 
 def _title_from_filename(stem: str) -> str:
     """Convert a filename stem like 'bedtime_music' or 'my-lullaby' to a title."""
@@ -47,6 +49,102 @@ def scan_media_catalog() -> list[dict[str, Any]]:
 def get_media_catalog() -> list[dict[str, Any]]:
     """Return the current media catalog by scanning the media directory."""
     return scan_media_catalog()
+
+
+def scan_playlist_catalog() -> dict[str, list[dict[str, Any]]]:
+    """Scan subdirectories for playlist folders.
+
+    Returns a dict mapping playlist_id to list of track items.
+    A playlist is any nested directory structure containing audio files.
+    Directory path becomes the playlist ID (e.g. cc_cycle3/week_1 → cc_cycle3_week_1).
+    """
+    global _playlist_cache
+    if _playlist_cache is not None:
+        return _playlist_cache
+
+    if not MEDIA_DIR.is_dir():
+        return {}
+
+    playlists: dict[str, list[dict[str, Any]]] = {}
+
+    for subdir in sorted(MEDIA_DIR.rglob("*")):
+        if not subdir.is_dir():
+            continue
+        # Skip the root media dir itself
+        rel_path = subdir.relative_to(MEDIA_DIR)
+        if str(rel_path) == ".":
+            continue
+
+        # Check if this directory has audio files directly in it
+        tracks = []
+        for path in sorted(subdir.iterdir()):
+            if path.is_file() and path.suffix.lower() in MEDIA_EXTENSIONS:
+                tracks.append({
+                    "file": str(path.relative_to(MEDIA_DIR)),
+                    "title": _title_from_filename(path.stem),
+                    "media_content_type": "music",
+                })
+
+        if tracks:
+            playlist_id = str(rel_path).replace("/", "_").replace(" ", "_").lower()
+            playlists[playlist_id] = tracks
+
+    logger.info("Playlist catalog scanned: %d playlists from %s", len(playlists), MEDIA_DIR)
+    _playlist_cache = playlists
+    return playlists
+
+
+def get_playlist_catalog() -> dict[str, list[dict[str, Any]]]:
+    """Return the current playlist catalog."""
+    return scan_playlist_catalog()
+
+
+CC_SUBJECTS = {
+    "bible": ["bible", "books_of_the_bible"],
+    "english": ["english"],
+    "history": ["history"],
+    "science": ["science"],
+    "latin": ["latin", "john_1"],
+    "geography": ["geography"],
+    "timeline": ["timeline"],
+    "math": ["skip_counting", "math", "geometry", "associative", "commutative", "distributive", "identity_law", "equivalents", "teaspoons"],
+}
+
+
+def resolve_playlist(playlist_id: str) -> list[dict[str, Any]] | None:
+    """Resolve a playlist ID to its track list. Returns None if not found.
+
+    Supports subject filtering: "cc_cycle3_week_5_science" resolves to
+    week 5's playlist filtered to science tracks only.
+    """
+    playlists = get_playlist_catalog()
+
+    # Direct match first
+    if playlist_id in playlists:
+        tracks = playlists[playlist_id]
+        return [
+            {**track, "media_content_id": f"{MEDIA_BASE}/{track['file']}"}
+            for track in tracks
+        ]
+
+    # Try subject-filtered match: e.g. "cc_cycle3_week_5_science"
+    for subject, keywords in CC_SUBJECTS.items():
+        suffix = f"_{subject}"
+        if playlist_id.endswith(suffix):
+            base_id = playlist_id[: -len(suffix)]
+            tracks = playlists.get(base_id)
+            if tracks:
+                filtered = [
+                    t for t in tracks
+                    if any(kw in t["file"].lower() for kw in keywords)
+                ]
+                if filtered:
+                    return [
+                        {**track, "media_content_id": f"{MEDIA_BASE}/{track['file']}"}
+                        for track in filtered
+                    ]
+
+    return None
 
 
 def is_stop_request(text: str) -> bool:

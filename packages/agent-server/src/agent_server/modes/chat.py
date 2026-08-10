@@ -4,7 +4,7 @@ import logging
 
 from ..knowledge import KnowledgeStore
 from ..llm import generate_chat_json
-from ..media import get_media_catalog, media_play_response, media_playlist_response
+from ..media import get_media_catalog, get_playlist_catalog, resolve_playlist, media_play_response, media_playlist_response
 from ..models import ConversationMode, ConversationRequest, ConversationResponse
 
 logger = logging.getLogger(__name__)
@@ -24,11 +24,13 @@ If you don't know something, say so cheerfully.
 
 {memory_context}
 
-You have a music library. When the user asks to play, hear, or listen to something, \
-pick the best match(es) from the list below. \
+You have a music library with individual songs and playlists. \
+When the user asks to play, hear, or listen to something, \
+pick the best match(es) from the lists below. \
 If they ask for a single song, use media_ids with one item. \
-If they ask for multiple songs or a playlist (e.g. "play some bedtime music", \
-"play a few songs", "play music for a while"), pick 3-8 good matches. \
+If they ask for a playlist by name (e.g. "play CC week 5"), use the playlist ID. \
+If they ask for multiple songs (e.g. "play some bedtime music", \
+"play a few songs"), pick 3-8 good matches from individual songs. \
 If no good match exists or the user isn't asking for media, set media_ids to an empty list.
 
 Available media:
@@ -72,6 +74,14 @@ def _build_system_prompt(knowledge: KnowledgeStore) -> str:
     else:
         media_list = "(no media files available)"
 
+    playlists = get_playlist_catalog()
+    if playlists:
+        playlist_list = "\n".join(f"- {pid}" for pid in sorted(playlists.keys()))
+        media_list += f"\n\nAvailable playlists (plays all songs in order):\n{playlist_list}"
+        media_list += "\n\nTo play a specific subject from a playlist, append the subject: " \
+                      "e.g. cc_cycle3_week_5_science, cc_cycle3_week_3_bible, cc_cycle3_week_1_math. " \
+                      "Subjects: bible, english, history, science, latin, geography, timeline, math."
+
     memory_context = knowledge.build_memory_prompt()
 
     return SYSTEM_PROMPT.format(media_list=media_list, memory_context=memory_context)
@@ -111,12 +121,20 @@ class ChatHandler:
         facts_raw = result.get("facts") or []
         logger.info("LLM result: media_ids=%s topics=%r facts=%r", media_ids, topics, facts_raw)
 
-        # Resolve media IDs against catalog
+        # Resolve media IDs against catalog and playlists
         catalog = get_media_catalog()
         catalog_by_id = {item["id"]: item for item in catalog}
         resolved_items: list[dict] = []
+        is_playlist = False
         for mid in media_ids:
-            if mid in catalog_by_id:
+            # Check if it's a playlist ID
+            playlist_tracks = resolve_playlist(mid)
+            if playlist_tracks:
+                resolved_items = [{"file": t["file"], "media_content_type": "music", "id": mid} for t in playlist_tracks]
+                is_playlist = True
+                logger.info("Resolved playlist %s: %d tracks", mid, len(resolved_items))
+                break
+            elif mid in catalog_by_id:
                 resolved_items.append(catalog_by_id[mid])
             else:
                 logger.warning("LLM returned unknown media_id: %s", mid)
@@ -137,7 +155,7 @@ class ChatHandler:
             logger.exception("Failed to record message in knowledge graph")
 
         # Return appropriate response
-        if len(resolved_items) > 1:
+        if is_playlist or len(resolved_items) > 1:
             return media_playlist_response(reply_text, resolved_items)
         elif len(resolved_items) == 1:
             return media_play_response(reply_text, resolved_items[0])
