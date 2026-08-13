@@ -40,28 +40,32 @@ Current topics:
 
 Look for these issues and propose fixes:
 1. DUPLICATE facts that say the same thing differently — merge them into one canonical fact
-2. SPELLING inconsistencies — normalize names to one spelling
-3. RELATED facts that should be linked or combined into a richer fact
-4. LOW-VALUE or NOISY facts that don't tell us anything useful about the family
+2. SPELLING inconsistencies — normalize names to one spelling (e.g. "Renel" vs "Renelle")
+3. AWKWARD phrasing — improve a fact's wording while keeping its meaning
 
 For each issue found, return an action. Available actions:
-- merge: combine two facts into one (keep the better phrasing, sum their evidence)
-- update: change a fact's name/properties to fix spelling or improve phrasing
-- delete: remove a fact that is noise or wrong
+- merge: combine two facts into one (keep the better phrasing, moves evidence to the kept fact)
+- update: change a fact's display name to fix spelling or improve phrasing
 
 Respond with JSON:
 {{"actions": [...], "done": true/false}}
 
 Each action is one of:
 - {{"type": "merge", "keep_id": "id_to_keep", "remove_id": "id_to_remove", "new_name": "merged phrasing"}}
-- {{"type": "update", "id": "fact_id", "new_name": "corrected phrasing", "properties": {{...}}}}
-- {{"type": "delete", "id": "fact_id", "reason": "why"}}
+- {{"type": "update", "id": "fact_id", "new_name": "corrected phrasing"}}
+
+IMPORTANT RULES:
+- NEVER delete facts. Every fact represents something a family member explicitly told us. \
+Even facts that look isolated or low-value (a pet's name, how many kids, a nickname) are important \
+memories. If a fact is not a duplicate and not misspelled, leave it alone.
+- Do NOT invent new facts.
+- Only use "new_name" in update actions — do not touch the structured properties.
 
 Set "done" to true if there are no more improvements to make. \
 Set "done" to false if you made changes and want another pass to check for more issues. \
 If nothing needs fixing, return {{"actions": [], "done": true}}.
 
-Be conservative — only act on clear issues. Do not invent new facts.\
+Be conservative — when in doubt, do nothing.\
 """
 
 
@@ -253,18 +257,13 @@ class MaintenanceJob:
                 logger.warning("Maintenance: update failed — could not resolve ID")
                 return
             new_name = action.get("new_name")
-            new_props = action.get("properties")
-            store.update_entity(fact_id, name=new_name, properties=new_props)
-            logger.info("Maintenance: updated %s → %r", fact_id[:8], new_name)
-
-        elif action_type == "delete":
-            fact_id = self._resolve_id(action.get("id", ""))
-            reason = action.get("reason", "")
-            if not fact_id:
-                logger.warning("Maintenance: delete failed — could not resolve ID")
+            if not new_name:
+                logger.warning("Maintenance: update skipped — no new_name provided")
                 return
-            store.delete_entity(fact_id)
-            logger.info("Maintenance: deleted %s (reason: %s)", fact_id[:8], reason)
+            # Only update the display name — never touch structured properties,
+            # which hold subject/relation/object/confidence.
+            store.update_entity(fact_id, name=new_name)
+            logger.info("Maintenance: updated %s → %r", fact_id[:8], new_name)
 
         else:
             logger.warning("Maintenance: unknown action type %r", action_type)
