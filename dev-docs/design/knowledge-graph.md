@@ -131,6 +131,11 @@ Token budget: ~30-50 tokens for facts (max 6) + ~20 tokens for topics (max 6). N
 
 On server startup, `sync_media_catalog()` scans the media directory and upserts each file as a `media` entity (matched by filename). This populates the graph with media nodes that can be linked to topics via the `about` relationship.
 
+Catalog synchronization is idempotent: an existing media entity is left untouched when
+its title, filename, and media metadata have not changed. Its `updated_at` timestamp
+therefore represents an actual metadata change or graph activity, rather than merely a
+server restart.
+
 Media-topic links are created organically: when a message mentions topics AND triggers media playback, the media entity gets `about` edges to those topics. Over time, the system learns which media relates to which subjects based on actual usage patterns.
 
 ## LLM Token Budget

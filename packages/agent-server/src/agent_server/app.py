@@ -9,13 +9,15 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 
 from contextlib import asynccontextmanager
 
 from .context import ConversationDB
 from .knowledge import KnowledgeStore
 from .maintenance import MaintenanceJob
+from .graph_review import GraphReviewService
 from .models import (
     ConversationMode,
     ConversationRequest,
@@ -50,6 +52,8 @@ conversation_db = ConversationDB()
 knowledge_store = KnowledgeStore()
 message_router = MessageRouter(conversation_db, knowledge_store)
 maintenance_job = MaintenanceJob(knowledge_store)
+graph_review = GraphReviewService(knowledge_store, conversation_db, maintenance_job)
+WEB_DIR = Path(__file__).parent / "web"
 
 
 @asynccontextmanager
@@ -107,3 +111,44 @@ async def run_maintenance() -> dict:
     """Manually trigger the nightly maintenance job."""
     result = await maintenance_job.run_now()
     return result
+
+
+@app.get("/graph", include_in_schema=False)
+async def graph_page() -> FileResponse:
+    """Private visual explorer and parent-directed graph maintenance UI."""
+    return FileResponse(WEB_DIR / "graph.html")
+
+
+@app.get("/api/graph")
+async def graph_snapshot() -> dict:
+    return knowledge_store.get_graph_snapshot()
+
+
+@app.post("/api/graph/review-sessions")
+async def create_graph_review_session(body: dict | None = None) -> dict:
+    title = (body or {}).get("title", "Graph review")
+    return await conversation_db.create_graph_review_session(str(title)[:120])
+
+
+@app.get("/api/graph/review-sessions")
+async def list_graph_review_sessions() -> list[dict]:
+    return await conversation_db.list_graph_review_sessions()
+
+
+@app.get("/api/graph/review-sessions/{session_id}")
+async def get_graph_review_session(session_id: str) -> dict:
+    session = await conversation_db.get_graph_review_session(session_id)
+    if not session:
+        raise HTTPException(status_code=404, detail="Review session not found")
+    return session
+
+
+@app.post("/api/graph/review-sessions/{session_id}/messages")
+async def send_graph_review_message(session_id: str, body: dict) -> dict:
+    text = str(body.get("text", "")).strip()
+    if not text:
+        raise HTTPException(status_code=422, detail="text is required")
+    try:
+        return await graph_review.handle_message(session_id, text)
+    except KeyError:
+        raise HTTPException(status_code=404, detail="Review session not found")

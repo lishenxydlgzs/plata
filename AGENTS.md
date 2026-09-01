@@ -59,6 +59,15 @@ Place design documents in `dev-docs/design/`. One doc per feature, written befor
 
 Track known bugs, workarounds, and upstream issues in `dev-docs/issues/`. One file per issue. Update status when resolved.
 
+## Privacy for committed examples
+
+Do not use real family member names, pet names, conversation text, graph facts, or
+other personal data from the deployed database in code examples, tests, fixtures,
+filenames, documentation, screenshots, or UI placeholders that may be committed or
+pushed to a remote repository. Use neutral placeholders (for example, “the family
+dog” or “Sample Person”) instead. Treat `ontology.db`, `conversations.db`, and their
+contents as private operational data that must never be committed.
+
 ## Requirements tracking
 
 `dev-docs/requirements.md` is the source of truth for feature status. When developing:

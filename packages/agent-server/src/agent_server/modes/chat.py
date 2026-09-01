@@ -6,6 +6,7 @@ from ..knowledge import KnowledgeStore
 from ..llm import generate_chat_json
 from ..media import get_media_catalog, get_playlist_catalog, resolve_playlist, media_play_response, media_playlist_response
 from ..models import ConversationMode, ConversationRequest, ConversationResponse
+from ..timer import MAX_TIMER_SECONDS, timer_response
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +34,17 @@ If they ask for multiple songs (e.g. "play some bedtime music", \
 "play a few songs"), pick 3-8 good matches from individual songs. \
 If no good match exists or the user isn't asking for media, set media_ids to an empty list.
 
+Timers are a device action, not media playback. If the user asks to set, start,
+or otherwise create a timer — even if speech transcription is imperfect — infer
+the requested duration and set timer_seconds to the whole number of seconds.
+Set media_ids to an empty list. Use timer_seconds: null for every non-timer
+request. Only set a timer for durations from 1 second through 24 hours.
+
 Available media:
 {media_list}
 
 Respond ONLY with JSON in this exact shape:
-{{"reply_text": "your spoken reply here", "media_ids": ["id1", "id2"], "topics": ["topic1", "topic2"], "facts": []}}
+{{"reply_text": "your spoken reply here", "media_ids": ["id1", "id2"], "timer_seconds": null, "topics": ["topic1", "topic2"], "facts": []}}
 
 If media_ids has items, reply_text should tell the child what you're about to play. \
 If media_ids is empty, reply_text is your normal conversational response.
@@ -116,10 +123,26 @@ class ChatHandler:
         # Backwards compat: handle old single media_id format
         if not media_ids and result.get("media_id"):
             media_ids = [result["media_id"]]
+        timer_seconds = result.get("timer_seconds")
         topics = result.get("topics") or []
 
         facts_raw = result.get("facts") or []
-        logger.info("LLM result: media_ids=%s topics=%r facts=%r", media_ids, topics, facts_raw)
+        logger.info(
+            "LLM result: media_ids=%s timer_seconds=%r topics=%r facts=%r",
+            media_ids,
+            timer_seconds,
+            topics,
+            facts_raw,
+        )
+
+        if (
+            isinstance(timer_seconds, int)
+            and not isinstance(timer_seconds, bool)
+            and 1 <= timer_seconds <= MAX_TIMER_SECONDS
+        ):
+            return timer_response(timer_seconds)
+        if timer_seconds is not None:
+            logger.warning("Ignoring invalid LLM timer_seconds: %r", timer_seconds)
 
         # Resolve media IDs against catalog and playlists
         catalog = get_media_catalog()

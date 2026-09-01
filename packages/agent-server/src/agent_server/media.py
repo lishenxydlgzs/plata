@@ -12,6 +12,7 @@ logger = logging.getLogger(__name__)
 MEDIA_DIR = Path(os.environ.get("MEDIA_DIR", "./media"))
 MEDIA_BASE = "media-source://media_source/local/kids_robot"
 MEDIA_EXTENSIONS = {".mp3", ".mp4", ".wav", ".ogg", ".flac", ".m4a"}
+SYSTEM_MEDIA_FILENAMES = {"timer.wav"}
 STOP_WORDS = ("stop", "pause", "quiet")
 MEDIA_WORDS = ("audio", "music", "song", "sound", "story")
 
@@ -31,7 +32,11 @@ def scan_media_catalog() -> list[dict[str, Any]]:
 
     catalog = []
     for path in sorted(MEDIA_DIR.iterdir()):
-        if not path.is_file() or path.suffix.lower() not in MEDIA_EXTENSIONS:
+        if (
+            not path.is_file()
+            or path.suffix.lower() not in MEDIA_EXTENSIONS
+            or path.name.lower() in SYSTEM_MEDIA_FILENAMES
+        ):
             continue
         stem = path.stem
         title = _title_from_filename(stem)

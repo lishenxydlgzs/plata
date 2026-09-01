@@ -60,6 +60,7 @@ if [ "$UPDATE_HA" = true ]; then
     echo "=== Updating HA integration ==="
     ssh "$REMOTE" "mkdir -p $REMOTE_HA_MEDIA"
     ssh "$REMOTE" "cp -r $REMOTE_AGENT/packages/ha-integration/custom_components/kids_robot $REMOTE_HA_COMPONENTS/"
+    ssh "$REMOTE" "cp $REMOTE_AGENT/packages/ha-integration/custom_components/kids_robot/assets/timer.wav $REMOTE_HA_MEDIA/timer.wav"
 
     echo "=== Restarting Home Assistant ==="
     ssh "$REMOTE" "docker restart homeassistant"

@@ -220,8 +220,8 @@ class MaintenanceJob:
             "topics_text": "\n".join(topics_lines) if topics_lines else "(no topics)",
         }
 
-    def _execute_action(self, action: dict[str, Any]) -> None:
-        """Execute a single maintenance action against the ontology."""
+    def execute_action(self, action: dict[str, Any]) -> bool:
+        """Apply one validated maintenance action. Returns whether it was applied."""
         store = self._knowledge.store
         action_type = action.get("type")
 
@@ -235,7 +235,7 @@ class MaintenanceJob:
             remove_id = self._resolve_id(remove_id)
             if not keep_id or not remove_id:
                 logger.warning("Maintenance: merge failed — could not resolve IDs")
-                return
+                return False
 
             # Move supports links from remove → keep
             links = store.get_entity_links(remove_id)
@@ -250,23 +250,30 @@ class MaintenanceJob:
             # Delete the duplicate
             store.delete_entity(remove_id)
             logger.info("Maintenance: merged %s into %s → %r", remove_id[:8], keep_id[:8], new_name)
+            return True
 
         elif action_type == "update":
             fact_id = self._resolve_id(action.get("id", ""))
             if not fact_id:
                 logger.warning("Maintenance: update failed — could not resolve ID")
-                return
+                return False
             new_name = action.get("new_name")
             if not new_name:
                 logger.warning("Maintenance: update skipped — no new_name provided")
-                return
+                return False
             # Only update the display name — never touch structured properties,
             # which hold subject/relation/object/confidence.
             store.update_entity(fact_id, name=new_name)
             logger.info("Maintenance: updated %s → %r", fact_id[:8], new_name)
+            return True
 
         else:
             logger.warning("Maintenance: unknown action type %r", action_type)
+            return False
+
+    def _execute_action(self, action: dict[str, Any]) -> None:
+        """Backward-compatible internal action executor."""
+        self.execute_action(action)
 
     def _resolve_id(self, short_id: str) -> str | None:
         """Resolve a short ID prefix to a full entity ID."""

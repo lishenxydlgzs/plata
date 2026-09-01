@@ -128,10 +128,10 @@ class KidsRobotConversationEntity(ConversationEntity):
             domain = data.get("domain")
             service = data.get("service")
 
-            # Allow media_player services and kids_robot.play_playlist
+            # Allow media_player services and the integration's own safe services.
             allowed = (
                 (domain == "media_player" and service in ALLOWED_MEDIA_PLAYER_SERVICES)
-                or (domain == DOMAIN and service == "play_playlist")
+                or (domain == DOMAIN and service in {"play_playlist", "start_timer"})
             )
             if not allowed:
                 _LOGGER.warning("Ignoring unsupported HA service action: %s", action)

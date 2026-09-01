@@ -91,11 +91,44 @@ class KnowledgeStore:
             )
         logger.info("Synced %d media files into ontology", len(catalog))
 
+    def get_graph_snapshot(self) -> dict[str, list[dict[str, Any]]]:
+        """Return the graph in a JSON-friendly form for the private review UI."""
+        rows = self.store._db.execute(
+            """SELECT id, entity_type, name, properties, created_at, updated_at
+               FROM entities ORDER BY updated_at DESC, created_at DESC"""
+        ).fetchall()
+        link_rows = self.store._db.execute(
+            "SELECT id, relationship_type, from_entity, to_entity, properties, created_at FROM links ORDER BY created_at"
+        ).fetchall()
+        return {
+            "nodes": [
+                {
+                    "id": row["id"], "type": row["entity_type"], "name": row["name"],
+                    "properties": json.loads(row["properties"]), "created_at": row["created_at"],
+                    "updated_at": row["updated_at"],
+                }
+                for row in rows
+            ],
+            "links": [
+                {
+                    "id": row["id"], "type": row["relationship_type"],
+                    "from": row["from_entity"], "to": row["to_entity"],
+                    "properties": json.loads(row["properties"]) if row["properties"] else {},
+                    "created_at": row["created_at"],
+                }
+                for row in link_rows
+            ],
+        }
+
     # ─── Media Catalog ────────────────────────────────────────────────────────
 
     def upsert_media(self, file_id: str, title: str, filename: str, **props: Any) -> str:
         """Create or update a media entity. Returns entity ID."""
         properties = {"filename": filename, "title": title, **props}
+        existing = self.store.get_entity_by_identifier("media_file", file_id)
+        if existing and existing.name == title and existing.properties == properties:
+            # Do not make a catalog scan look like a content update.
+            return existing.id
         entity, _ = self.store.upsert_entity("media", title, properties=properties, match_on=("media_file", file_id))
         return entity.id
 

@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Plata Knowledge Graph</title>
+  <style>
+    :root { color-scheme: light; --ink:#172033; --muted:#667085; --line:#dfe4ec; --panel:#fff; --bg:#f5f7fb; --accent:#635bff; }
+    * { box-sizing:border-box } body { margin:0; color:var(--ink); background:var(--bg); font:14px/1.45 system-ui,-apple-system,sans-serif }
+    header { min-height:54px; padding:10px 28px; background:#19213a; color:white; display:flex; align-items:center }
+    h1 { margin:0; font-size:18px } button { border:0; border-radius:7px; padding:8px 11px; cursor:pointer; background:var(--accent); color:#fff; font:inherit } button:disabled { opacity:.55; cursor:wait }
+    main { display:grid; grid-template-columns:minmax(480px, 1.6fr) minmax(330px, 1fr); gap:18px; max-width:1500px; margin:18px auto; padding:0 18px }
+    .panel { background:var(--panel); border:1px solid var(--line); border-radius:10px; overflow:hidden } .panel h2 { margin:0; padding:14px 16px; font-size:16px; border-bottom:1px solid var(--line) }
+    #graph { width:100%; height:420px; display:block; touch-action:none; cursor:grab; background:radial-gradient(#eff1f7 1px, transparent 1px); background-size:14px 14px } #graph:active { cursor:grabbing } .graph-node { cursor:grab } .graph-node:active { cursor:grabbing }
+    .toolbar { display:flex; gap:9px; padding:12px 16px; border-bottom:1px solid var(--line) } input, select { width:100%; border:1px solid #cbd2dd; border-radius:7px; padding:8px; font:inherit; color:inherit }
+    .counts { color:var(--muted); padding:0 16px 10px; font-size:12px } #entity-list { max-height:330px; overflow:auto; border-top:1px solid var(--line) }
+    .entity { padding:10px 16px; border-bottom:1px solid #edf0f4 } .entity strong { display:block } .meta { color:var(--muted); font-size:12px; overflow-wrap:anywhere }.pill { border-radius:99px; background:#edf0ff; color:#4038a3; padding:2px 7px; font-size:11px; margin-right:5px }
+    #chat { height:400px; overflow:auto; padding:14px; display:flex; flex-direction:column; gap:10px }.bubble { max-width:88%; padding:9px 11px; border-radius:10px; white-space:pre-wrap }.user { align-self:flex-end; background:#e4e2ff }.model { align-self:flex-start; background:#f0f2f6 }.action { font-size:12px; color:#3c356c; margin-top:5px }
+    form { display:flex; gap:8px; padding:12px; border-top:1px solid var(--line) } form input { flex:1 } #sessions { display:flex; gap:7px; padding:10px 12px; border-bottom:1px solid var(--line); overflow:auto }.session { background:#eef0f5; color:#344054; white-space:nowrap; font-size:12px }.session.active { background:#635bff; color:#fff }
+    .legend { display:flex; flex-wrap:wrap; gap:9px; padding:11px 16px; color:var(--muted); font-size:12px }.dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px }
+    .review-panel { position:sticky; top:18px; align-self:start; display:flex; flex-direction:column; max-height:calc(100vh - 36px) }.review-panel #chat { flex:1; height:auto; min-height:180px }.review-panel form { flex:none }
+    @media(max-width:900px) { main { grid-template-columns:1fr } #graph { height:330px } .review-panel { position:static; max-height:none } .review-panel #chat { height:400px } }
+  </style>
+</head>
+<body>
+<header><h1>Plata’s knowledge graph</h1></header>
+<main>
+  <section class="panel"><h2>Graph</h2><svg id="graph" viewBox="0 0 800 420" aria-label="Knowledge graph"></svg><div class="legend" id="legend"></div><div class="toolbar"><input id="search" placeholder="Filter entities, facts, and properties"><select id="type"><option value="">All types</option></select></div><div class="counts" id="counts"></div><div id="entity-list"></div></section>
+  <section class="panel review-panel"><h2>Review and refine</h2><div id="sessions"></div><div id="chat"></div><form id="form"><input id="message" autocomplete="off" placeholder="e.g. Merge the duplicate facts about the family dog"><button>Send</button></form></section>
+</main>
+<script>
+const colors={fact:'#ff8b5c',message:'#4c97e8',topic:'#45b999',media:'#9b75d8'}; let graph={nodes:[],links:[]}, sessionId, forceFrame, graphPositions=new Map(), graphTransform={x:0,y:0,scale:1};
+const $=s=>document.querySelector(s), esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const formatTime=value=>value?new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)):'Unknown';
+async function api(url, options){const r=await fetch(url,options); if(!r.ok) throw new Error((await r.json()).detail||r.statusText); return r.json()}
+function visibleGraphNodes(){
+  // A type-balanced sample avoids a large media catalog hiding every topic.
+  const perType=20, groups={};
+  graph.nodes.forEach(node=>(groups[node.type]??=[]).push(node));
+  return Object.values(groups).flatMap(nodes=>nodes
+    .sort((a,b)=>String(b.updated_at).localeCompare(String(a.updated_at)))
+    .slice(0,perType));
+}
+function hash(value){let result=0;for(const char of value)result=((result<<5)-result)+char.charCodeAt(0)|0;return Math.abs(result)}
+function renderGraph(){
+  cancelAnimationFrame(forceFrame); const svg=$('#graph'), w=800,h=420, shown=visibleGraphNodes(), ids=new Set(shown.map(n=>n.id));
+  const nodes=shown.map(node=>{const saved=graphPositions.get(node.id), seed=hash(node.id); return {...node,x:saved?.x??(80+seed%640),y:saved?.y??(60+Math.floor(seed/641)%300),vx:0,vy:0,fixed:false}});
+  const byId=new Map(nodes.map(node=>[node.id,node])); const links=graph.links.filter(link=>byId.has(link.from)&&byId.has(link.to)).map(link=>({...link,source:byId.get(link.from),target:byId.get(link.to)}));
+  svg.replaceChildren(); const ns='http://www.w3.org/2000/svg', viewport=document.createElementNS(ns,'g'), linksGroup=document.createElementNS(ns,'g'), nodesGroup=document.createElementNS(ns,'g'); viewport.setAttribute('id','graph-viewport'); viewport.append(linksGroup,nodesGroup); svg.append(viewport);
+  const applyTransform=()=>viewport.setAttribute('transform',`translate(${graphTransform.x} ${graphTransform.y}) scale(${graphTransform.scale})`); applyTransform();
+  const linkElements=links.map(link=>{const line=document.createElementNS(ns,'line'), title=document.createElementNS(ns,'title'); line.setAttribute('stroke','#bac3d2');line.setAttribute('stroke-width','1.2');title.textContent=link.type;line.append(title);linksGroup.append(line);return {line,link}});
+  const nodeElements=nodes.map(node=>{const group=document.createElementNS(ns,'g'),circle=document.createElementNS(ns,'circle'),label=document.createElementNS(ns,'text'),title=document.createElementNS(ns,'title');group.classList.add('graph-node');group.dataset.id=node.id;circle.setAttribute('r',node.type==='fact'?'9':'7');circle.setAttribute('fill',colors[node.type]||'#8a94a6');title.textContent=`${node.type}: ${node.name}`;circle.append(title);label.setAttribute('x','11');label.setAttribute('y','4');label.setAttribute('font-size','11');label.setAttribute('fill','#344054');label.textContent=node.name.slice(0,26);group.append(circle,label);nodesGroup.append(group);return {group,node}});
+  const draw=()=>{for(const {line,link} of linkElements){line.setAttribute('x1',link.source.x);line.setAttribute('y1',link.source.y);line.setAttribute('x2',link.target.x);line.setAttribute('y2',link.target.y)}for(const {group,node} of nodeElements)group.setAttribute('transform',`translate(${node.x} ${node.y})`)};
+  let alpha=1; const tick=()=>{for(let i=0;i<nodes.length;i++)for(let j=i+1;j<nodes.length;j++){const a=nodes[i],b=nodes[j],dx=b.x-a.x,dy=b.y-a.y,distance=Math.max(18,Math.hypot(dx,dy)),force=900/(distance*distance);if(!a.fixed){a.vx-=dx/distance*force*alpha;a.vy-=dy/distance*force*alpha}if(!b.fixed){b.vx+=dx/distance*force*alpha;b.vy+=dy/distance*force*alpha}}for(const link of links){const dx=link.target.x-link.source.x,dy=link.target.y-link.source.y,distance=Math.max(1,Math.hypot(dx,dy)),force=(distance-95)*.012*alpha;if(!link.source.fixed){link.source.vx+=dx/distance*force;link.source.vy+=dy/distance*force}if(!link.target.fixed){link.target.vx-=dx/distance*force;link.target.vy-=dy/distance*force}}for(const node of nodes){if(!node.fixed){node.vx+=(w/2-node.x)*.002*alpha;node.vy+=(h/2-node.y)*.002*alpha;node.vx*=.82;node.vy*=.82;node.x+=node.vx;node.y+=node.vy}}draw();alpha*=.975;if(alpha>.025)forceFrame=requestAnimationFrame(tick);else nodes.forEach(node=>graphPositions.set(node.id,{x:node.x,y:node.y}))}; draw();tick();
+  let gesture; const point=event=>{const rect=svg.getBoundingClientRect();return{x:(event.clientX-rect.left)*w/rect.width,y:(event.clientY-rect.top)*h/rect.height}};
+  svg.onwheel=event=>{event.preventDefault();const p=point(event),old=graphTransform.scale,next=Math.max(.35,Math.min(3,old*(event.deltaY<0?1.12:.89)));graphTransform.x=p.x-(p.x-graphTransform.x)*next/old;graphTransform.y=p.y-(p.y-graphTransform.y)*next/old;graphTransform.scale=next;applyTransform()};
+  svg.onpointerdown=event=>{const target=event.target.closest('.graph-node'),p=point(event);svg.setPointerCapture(event.pointerId);if(target){const node=byId.get(target.dataset.id);node.fixed=true;gesture={kind:'node',node,offsetX:(p.x-graphTransform.x)/graphTransform.scale-node.x,offsetY:(p.y-graphTransform.y)/graphTransform.scale-node.y}}else gesture={kind:'pan',x:p.x,y:p.y,startX:graphTransform.x,startY:graphTransform.y}};
+  svg.onpointermove=event=>{if(!gesture)return;const p=point(event);if(gesture.kind==='node'){gesture.node.x=(p.x-graphTransform.x)/graphTransform.scale-gesture.offsetX;gesture.node.y=(p.y-graphTransform.y)/graphTransform.scale-gesture.offsetY;draw()}else{graphTransform.x=gesture.startX+p.x-gesture.x;graphTransform.y=gesture.startY+p.y-gesture.y;applyTransform()}};
+  svg.onpointerup=event=>{if(gesture?.kind==='node'){gesture.node.fixed=false;graphPositions.set(gesture.node.id,{x:gesture.node.x,y:gesture.node.y})}gesture=undefined;svg.releasePointerCapture(event.pointerId)};
+  $('#legend').innerHTML=Object.entries(colors).map(([type,color])=>`<span><i class="dot" style="background:${color}"></i>${type}</span>`).join('')+(graph.nodes.length>shown.length?` <span>Showing up to 20 recent nodes per type (${shown.length} total)</span>`:'')+' <span>Drag nodes · scroll to zoom · drag background to pan</span>';
+}
+function renderList(){const q=$('#search').value.toLowerCase(), type=$('#type').value; const nodes=graph.nodes.filter(n=>!type||n.type===type).filter(n=>JSON.stringify(n).toLowerCase().includes(q)); $('#counts').textContent=`${nodes.length} of ${graph.nodes.length} entities · ${graph.links.length} links · newest updates first`; $('#entity-list').innerHTML=nodes.map(n=>`<div class="entity"><strong><span class="pill">${esc(n.type)}</span>${esc(n.name)}</strong><div class="meta">Updated ${esc(formatTime(n.updated_at))} · Created ${esc(formatTime(n.created_at))}</div><div class="meta">${esc(n.id)}${Object.keys(n.properties).length?' · '+esc(JSON.stringify(n.properties)):''}</div></div>`).join('')||'<div class="entity meta">No matching entities.</div>'}
+async function loadGraph(){const selectedType=$('#type').value;graph=await api('/api/graph'); const types=[...new Set(graph.nodes.map(n=>n.type))]; $('#type').innerHTML='<option value="">All types</option>'+types.map(t=>`<option>${esc(t)}</option>`).join(''); if(types.includes(selectedType))$('#type').value=selectedType; renderGraph();renderList()}
+function addBubble(text,role,actions=[]){const e=document.createElement('div');e.className='bubble '+role;e.innerHTML=esc(text)+actions.map(x=>`<div class="action">${x.applied?'Applied':'Not applied'}: ${esc(JSON.stringify(x.action))}</div>`).join('');$('#chat').append(e);$('#chat').scrollTop=999999}
+async function loadSessions(){const sessions=await api('/api/graph/review-sessions');$('#sessions').innerHTML=`<button id="new-review" class="session">New review</button>`+sessions.map(s=>`<button class="session ${s.id===sessionId?'active':''}" data-id="${s.id}">${esc(s.title)}</button>`).join(''); $('#new-review').onclick=startNewReview; document.querySelectorAll('.session[data-id]').forEach(b=>b.onclick=()=>openSession(b.dataset.id));}
+function startNewReview(){sessionId=undefined;$('#chat').innerHTML='';loadSessions()}
+async function openSession(id){sessionId=id; const s=await api('/api/graph/review-sessions/'+id);$('#chat').innerHTML='';s.messages.forEach(m=>addBubble(m.text,m.role));await loadSessions()}
+async function startSession(){const s=await api('/api/graph/review-sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});sessionId=s.id}
+$('#form').onsubmit=async e=>{e.preventDefault();const input=$('#message'),text=input.value.trim();if(!text)return;const b=e.submitter;b.disabled=true;try{if(!sessionId)await startSession();input.value='';addBubble(text,'user');const r=await api('/api/graph/review-sessions/'+sessionId+'/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});addBubble(r.reply_text,'model',r.actions);await loadGraph();await loadSessions()}catch(err){addBubble('Error: '+err.message,'model')}finally{b.disabled=false}};
+$('#search').oninput=renderList;$('#type').onchange=renderList;(async()=>{await loadGraph();await loadSessions()})().catch(e=>alert(e.message));setInterval(()=>loadGraph().catch(console.error),60000);
+</script>
+</body></html>

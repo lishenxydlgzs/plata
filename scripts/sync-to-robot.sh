@@ -27,6 +27,10 @@ EXCLUDES=(
     --exclude='.pytest_cache'
     --exclude='*.egg-info'
     --exclude='.ruff_cache'
+    # These live on the robot and must survive an application-code sync.
+    --exclude='data'
+    --exclude='logs'
+    --exclude='classic_conversion_cycle3'
 )
 
 DRY_RUN=""
