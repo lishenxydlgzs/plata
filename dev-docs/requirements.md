@@ -13,6 +13,7 @@
 - [x] Multi-turn conversation context — tracks turns per conversation_id, persisted in SQLite
 - [x] Graceful error fallback — returns child-friendly apology on failure
 - [x] LLM integration (Gemini 3.1 Flash Lite) — generates real responses with child-friendly system prompt
+- [x] LLM fallback chain — retries temporary Gemini availability failures with alternate configured models
 - [x] Response brevity enforcement — system prompt constrains replies to 1-3 short sentences
 - [x] Catalog-based media playback commands — LLM selector chooses playable audio from metadata and stop audio uses response actions
 - [x] Playlist playback — LLM can pick multiple tracks; HA integration plays them sequentially using state-change detection

@@ -10,6 +10,12 @@ from google.genai import types
 logger = logging.getLogger(__name__)
 
 _client: genai.Client | None = None
+DEFAULT_MODELS = (
+    "gemini-3.1-flash-lite",
+    "gemini-2.5-flash-lite",
+    "gemini-2.5-flash",
+)
+TEMPORARY_STATUS_CODES = {429, 500, 502, 503, 504}
 
 
 def get_client() -> genai.Client:
@@ -22,10 +28,51 @@ def get_client() -> genai.Client:
     return _client
 
 
+def get_models() -> tuple[str, ...]:
+    """Return the configured model preference order."""
+    configured = os.environ.get("GEMINI_MODELS")
+    if not configured:
+        return DEFAULT_MODELS
+    models = tuple(model.strip() for model in configured.split(",") if model.strip())
+    return models or DEFAULT_MODELS
+
+
+def _is_temporary_error(error: Exception) -> bool:
+    """Whether an API error is worth retrying against another model."""
+    code = getattr(error, "code", None)
+    if code is None:
+        response = getattr(error, "response", None)
+        code = getattr(response, "status_code", None)
+    try:
+        return int(code) in TEMPORARY_STATUS_CODES
+    except (TypeError, ValueError):
+        return False
+
+
+async def generate_content_with_fallback(
+    contents: list[types.Content], config: types.GenerateContentConfig
+):
+    """Generate content, moving to another configured model on temporary failures."""
+    client = get_client()
+    models = get_models()
+    for index, model in enumerate(models):
+        try:
+            return await client.aio.models.generate_content(
+                model=model, contents=contents, config=config
+            )
+        except Exception as error:
+            if _is_temporary_error(error) and index < len(models) - 1:
+                logger.warning(
+                    "Gemini model %s temporarily unavailable (%s); trying %s",
+                    model, getattr(error, "code", "unknown"), models[index + 1],
+                )
+                continue
+            raise
+    raise RuntimeError("No Gemini models configured")
+
+
 async def generate(system_prompt: str, conversation_history: list[dict], user_text: str) -> str:
     """Generate a text response using Gemini Flash."""
-    client = get_client()
-
     contents = []
     for turn in conversation_history:
         contents.append(types.Content(
@@ -38,8 +85,7 @@ async def generate(system_prompt: str, conversation_history: list[dict], user_te
     ))
 
     try:
-        response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-lite",
+        response = await generate_content_with_fallback(
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -60,8 +106,6 @@ async def generate_chat_json(
     system_prompt: str, conversation_history: list[dict], user_text: str
 ) -> dict:
     """Generate a structured JSON response with conversation history."""
-    client = get_client()
-
     contents = []
     for turn in conversation_history:
         contents.append(types.Content(
@@ -74,8 +118,7 @@ async def generate_chat_json(
     ))
 
     try:
-        response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-lite",
+        response = await generate_content_with_fallback(
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
@@ -95,11 +138,8 @@ async def generate_chat_json(
 
 async def generate_json(system_prompt: str, user_text: str) -> dict:
     """Generate a small JSON object using Gemini Flash."""
-    client = get_client()
-
     try:
-        response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-lite",
+        response = await generate_content_with_fallback(
             contents=[
                 types.Content(
                     role="user",

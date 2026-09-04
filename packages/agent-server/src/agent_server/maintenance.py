@@ -20,7 +20,7 @@ from google import genai
 from google.genai import types
 
 from .knowledge import KnowledgeStore
-from .llm import get_client
+from .llm import generate_content_with_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -146,9 +146,7 @@ class MaintenanceJob:
 
     async def _call_llm(self, system_prompt: str) -> dict:
         """Call LLM with higher token limits for maintenance tasks."""
-        client = get_client()
-        response = await client.aio.models.generate_content(
-            model="gemini-3.1-flash-lite",
+        response = await generate_content_with_fallback(
             contents=[
                 types.Content(
                     role="user",
