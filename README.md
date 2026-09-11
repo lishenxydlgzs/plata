@@ -1,8 +1,20 @@
 # Plata
 
+<img src="assets/brand/plata-icon.png" alt="Plata: a teal P-shaped speech bubble with friendly, smiling robot eyes" width="160" />
+
 A friendly robot conversation companion for kids, powered by Gemini and Home Assistant.
 
 Plata lives on a Raspberry Pi connected to a [Home Assistant Voice PE](https://www.home-assistant.io/voice-pe/) device. Children talk to it naturally — it listens via wake word, transcribes speech, generates a contextual response, and speaks back.
+
+## Brand philosophy
+
+**Play comes first. Learning comes along.**
+
+Play is children's primary task of childhood. As parents, we teach them along the way. The name **Plata** carries this idea: **Pla**y, **T**each, **A**long. We use “Plata” in everyday writing; “PlaTA” highlights the meaning behind the name.
+
+Plata is a friendly companion for playful discovery, with parents guiding learning along the way. Its conversations should welcome curiosity, imagination, and exploration, letting learning grow naturally out of play.
+
+Our [icon](assets/brand/plata-icon.png) is a soft, P-shaped speech bubble with happy robot eyes. It brings together Plata's name, conversation, and a cute, welcoming personality for children.
 
 ## Architecture
 
