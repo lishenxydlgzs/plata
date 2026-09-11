@@ -12,10 +12,10 @@ The knowledge graph is built on the `ontology` library (`packages/ontology/`), u
 
 | Type | Purpose | Example |
 |------|---------|---------|
-| `message` | Every user utterance | "My dog is named Pang Pang" |
+| `message` | Every user utterance | "My dog is named Sample Pet" |
 | `topic` | Subjects mentioned in conversations | "dinosaurs", "space" |
 | `media` | Playable audio/video files | "Hokey Pokey", "ABC Song" |
-| `fact` | Explicit statements about the family | "Pang Pang is a dog" |
+| `fact` | Explicit statements about the family | "Sample Pet is a dog" |
 
 ### Link Types
 
@@ -36,9 +36,9 @@ The knowledge graph is built on the `ontology` library (`packages/ontology/`), u
 [media: Dinosaur Song]
     --about--> [topic: dinosaurs]
 
-[message: "My dog is named Pang Pang"]
+[message: "My dog is named Sample Pet"]
     --mentions--> [topic: dogs]
-    --supports--> [fact: Pang Pang is a dog]
+    --supports--> [fact: Sample Pet is a dog]
 ```
 
 ## Data Flow
@@ -61,7 +61,7 @@ This all happens synchronously after the LLM response — zero extra API calls.
 The LLM is instructed to extract 0-2 facts per message, only when the user explicitly states something. The prompt includes concrete examples of what to extract and what NOT to extract (inferences, preferences from behavior).
 
 Each extracted fact includes:
-- `subject`: the thing being described ("Pang Pang")
+- `subject`: the thing being described ("Sample Pet")
 - `relation`: the relationship ("is_a")
 - `object`: the value ("family dog")
 - `confidence`: 0.0-1.0, how clearly the user stated this
@@ -73,9 +73,9 @@ Facts are entities with a human-readable `name` (used directly in the prompt) an
 ```
 Entity(
     entity_type="fact",
-    name="Pang Pang is a family dog",
+    name="Sample Pet is a family dog",
     properties={
-        "subject": "Pang Pang",
+        "subject": "Sample Pet",
         "relation": "is_a",
         "object": "family dog",
         "confidence": 0.9
@@ -121,7 +121,7 @@ Each mention contributes `1 / (1 + age_in_days)`. A mention from today scores ~1
 The memory prompt is injected into the `{memory_context}` placeholder in the system prompt:
 
 ```
-Things you know about this family: Pang Pang is a dog. Pang Pang loves chicken treats.
+Things you know about this family: Sample Pet is a dog. Sample Pet loves chicken treats.
 Topics we've talked about recently: dinosaurs, space, volcanoes.
 ```
 
@@ -161,5 +161,5 @@ Media-topic links are created organically: when a message mentions topics AND tr
 
 - **Fact contradiction handling**: Currently no mechanism to lower confidence when user contradicts a fact. Could add a `contradicts` link type or detect via the LLM.
 - **Topic decay floor**: Topics that haven't been mentioned in weeks should eventually disappear entirely. The recency formula handles this naturally but extremely old topics with many mentions may still linger.
-- **Entity resolution**: "Pang Pang" as a topic vs "Pang Pang" in a fact are separate entities. Could merge them via identifier-based dedup.
+- **Entity resolution**: "Sample Pet" as a topic vs "Sample Pet" in a fact are separate entities. Could merge them via identifier-based dedup.
 - **Child identification**: Facts could be scoped per-child if speaker identification is added later. The graph structure supports this (add a `child` entity, link facts to children).

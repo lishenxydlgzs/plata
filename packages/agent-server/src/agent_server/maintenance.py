@@ -40,7 +40,7 @@ Current topics:
 
 Look for these issues and propose fixes:
 1. DUPLICATE facts that say the same thing differently — merge them into one canonical fact
-2. SPELLING inconsistencies — normalize names to one spelling (e.g. "Renel" vs "Renelle")
+2. SPELLING inconsistencies — normalize names to one spelling (e.g. "Sampl Person" vs "Sample Person")
 3. AWKWARD phrasing — improve a fact's wording while keeping its meaning
 
 For each issue found, return an action. Available actions:
