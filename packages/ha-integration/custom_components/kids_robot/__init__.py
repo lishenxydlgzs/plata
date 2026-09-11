@@ -6,13 +6,21 @@ from collections.abc import Callable
 from datetime import datetime
 from uuid import uuid4
 
+import aiohttp
+
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, ServiceCall, callback
 from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.event import async_call_later
 from homeassistant.core import Event
 
-from .const import CONF_MEDIA_PLAYER_ENTITY_ID, DEFAULT_MEDIA_PLAYER_ENTITY_ID, DOMAIN
+from .const import (
+    CONF_BACKEND_URL,
+    CONF_MEDIA_PLAYER_ENTITY_ID,
+    DEFAULT_BACKEND_URL,
+    DEFAULT_MEDIA_PLAYER_ENTITY_ID,
+    DOMAIN,
+)
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -29,6 +37,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     media_player_entity_id = entry.data.get(
         CONF_MEDIA_PLAYER_ENTITY_ID, DEFAULT_MEDIA_PLAYER_ENTITY_ID
     )
+    backend_url = entry.data.get(CONF_BACKEND_URL, DEFAULT_BACKEND_URL).rstrip("/")
+    active_playlist_task: asyncio.Task | None = None
+    active_session_id: str | None = None
     timers: dict[str, Callable[[], None]] = {}
     hass.data[DOMAIN].setdefault("timers", {})[entry.entry_id] = timers
 
@@ -82,38 +93,109 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         timers[timer_id] = async_call_later(hass, duration, timer_finished)
         _LOGGER.info("Timer started: %s (%d seconds)", timer_id, duration)
 
+    async def report_playback(
+        session_id: str | None, event: str, track_index: int | None = None
+    ) -> None:
+        if not session_id:
+            return
+        payload = {"event": event, "track_index": track_index}
+        try:
+            timeout = aiohttp.ClientTimeout(total=10)
+            async with aiohttp.ClientSession(timeout=timeout) as session:
+                async with session.post(
+                    f"{backend_url}/playback/sessions/{session_id}/events",
+                    json=payload,
+                ) as response:
+                    if response.status != 200:
+                        _LOGGER.warning(
+                            "Playback event %s for %s returned %s",
+                            event, session_id, response.status,
+                        )
+        except Exception:
+            _LOGGER.exception("Failed to report playback event %s", event)
+
+    async def cancel_active_playlist(final_status: str) -> None:
+        nonlocal active_playlist_task, active_session_id
+        task = active_playlist_task
+        session_id = active_session_id
+        if task and task is not asyncio.current_task() and not task.done():
+            task.cancel()
+            try:
+                await task
+            except asyncio.CancelledError:
+                pass
+        active_playlist_task = None
+        active_session_id = None
+        await hass.services.async_call(
+            "media_player",
+            "media_stop",
+            {"entity_id": media_player_entity_id},
+            blocking=True,
+        )
+        await report_playback(session_id, final_status)
+
+    async def handle_stop_playback(call: ServiceCall) -> None:
+        """Stop audio and retain any playlist cursor for later resumption."""
+        await cancel_active_playlist("stopped")
+
     async def handle_play_playlist(call: ServiceCall) -> None:
         """Play a list of tracks sequentially, waiting for each to finish."""
+        nonlocal active_playlist_task, active_session_id
         tracks = call.data.get("tracks", [])
+        session_id = call.data.get("session_id")
+        start_index = call.data.get("start_index", 0)
         if not tracks:
             return
+        if not isinstance(start_index, int) or not 0 <= start_index < len(tracks):
+            _LOGGER.warning("Ignoring invalid playlist start index: %r", start_index)
+            return
 
-        _LOGGER.info("Playing playlist: %d tracks", len(tracks))
+        if active_playlist_task and active_playlist_task is not asyncio.current_task():
+            await cancel_active_playlist("interrupted")
 
-        for i, track in enumerate(tracks):
-            _LOGGER.info("Playlist track %d/%d: %s", i + 1, len(tracks), track.split("/")[-1])
+        current_task = asyncio.current_task()
+        active_playlist_task = current_task
+        active_session_id = session_id
 
-            await hass.services.async_call(
-                "media_player",
-                "play_media",
-                {
-                    "entity_id": media_player_entity_id,
-                    "media_content_id": track,
-                    "media_content_type": "music",
-                },
-                blocking=True,
-            )
+        _LOGGER.info("Playing playlist: %d tracks, starting at %d", len(tracks), start_index)
 
-            # Wait for playback to finish (state goes playing → idle)
-            if i < len(tracks) - 1:
+        try:
+            for i in range(start_index, len(tracks)):
+                track = tracks[i]
+                _LOGGER.info("Playlist track %d/%d: %s", i + 1, len(tracks), track.split("/")[-1])
+
+                await hass.services.async_call(
+                    "media_player",
+                    "play_media",
+                    {
+                        "entity_id": media_player_entity_id,
+                        "media_content_id": track,
+                        "media_content_type": "music",
+                    },
+                    blocking=True,
+                )
+
                 finished = await _wait_for_playback_complete(hass, media_player_entity_id, timeout=600)
                 if not finished:
                     _LOGGER.warning("Playlist: giving up after timeout, stopping at track %d/%d", i + 1, len(tracks))
+                    await report_playback(session_id, "failed")
                     break
-
-        _LOGGER.info("Playlist complete")
+                await report_playback(session_id, "track_completed", i)
+            else:
+                _LOGGER.info("Playlist complete")
+        except asyncio.CancelledError:
+            _LOGGER.info("Playlist interrupted")
+            return
+        except Exception:
+            _LOGGER.exception("Playlist failed during playback")
+            await report_playback(session_id, "failed")
+        finally:
+            if active_playlist_task is current_task:
+                active_playlist_task = None
+                active_session_id = None
 
     hass.services.async_register(DOMAIN, "play_playlist", handle_play_playlist)
+    hass.services.async_register(DOMAIN, "stop_playback", handle_stop_playback)
     hass.services.async_register(DOMAIN, "start_timer", handle_start_timer)
 
     return True
@@ -175,5 +257,6 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             cancel()
         hass.data[DOMAIN].pop(entry.entry_id)
     hass.services.async_remove(DOMAIN, "play_playlist")
+    hass.services.async_remove(DOMAIN, "stop_playback")
     hass.services.async_remove(DOMAIN, "start_timer")
     return unload_ok

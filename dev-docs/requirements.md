@@ -22,6 +22,13 @@
 - [x] Fact extraction with provenance — LLM extracts explicit user statements as structured facts, stored with confidence scores and linked to source messages
 - [x] Long-term memory — system prompt includes known facts and recency-weighted topics across all sessions
 - [x] Knowledge graph review UI — visualize graph and persist parent-directed maintenance chats
+- [x] Resumable playlist playback — persist per-playlist progress and resume interrupted CC weeks
+- [x] Household guidance documents — preserve Markdown and immutable content revisions, with application instructions separate from content
+- [x] Behavior event logging — record reports and model interpretations separately, link guidance revisions, and append repair/review updates
+- [x] Learning memory — record session starts and reported practice/recall/mastery, linked to stable people and topics
+- [x] Relevant household memory retrieval — retrieve a child's topic history before encouragement and isolate conversation history by conversation ID
+- [x] Independent memory settings — enable behavior and learning logging separately from household guidance
+- [x] Legacy family values and kid events — retain existing records and APIs, with legacy guidance as fallback
 
 ### Planned
 - [ ] Child-safe content filtering — block inappropriate responses

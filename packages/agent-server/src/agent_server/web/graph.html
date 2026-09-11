@@ -28,7 +28,7 @@
   <section class="panel review-panel"><h2>Review and refine</h2><div id="sessions"></div><div id="chat"></div><form id="form"><input id="message" autocomplete="off" placeholder="e.g. Merge the duplicate facts about the family dog"><button>Send</button></form></section>
 </main>
 <script>
-const colors={fact:'#ff8b5c',message:'#4c97e8',topic:'#45b999',media:'#9b75d8'}; let graph={nodes:[],links:[]}, sessionId, forceFrame, graphPositions=new Map(), graphTransform={x:0,y:0,scale:1};
+const colors={guidance_document:'#1f9d8a',person:'#d65b98',learning_event:'#348cd1',behavior_event:'#e4a11b',fact:'#ff8b5c',family_value:'#1f9d8a',kid_event:'#e4a11b',message:'#4c97e8',topic:'#45b999',media:'#9b75d8'}; let graph={nodes:[],links:[]}, sessionId, forceFrame, graphPositions=new Map(), graphTransform={x:0,y:0,scale:1};
 const $=s=>document.querySelector(s), esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const formatTime=value=>value?new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)):'Unknown';
 async function api(url, options){const r=await fetch(url,options); if(!r.ok) throw new Error((await r.json()).detail||r.statusText); return r.json()}

@@ -46,15 +46,25 @@ The catalog is built dynamically by scanning the media directory at runtime. No 
 
 Supported extensions: `.mp3`, `.mp4`, `.wav`, `.ogg`, `.flac`, `.m4a`
 
+Upload normalization collapses repeated periods in filenames. Home Assistant
+rejects media paths containing `..` as unsafe.
+
 To add a playable file, just copy the audio into the HA media directory with a descriptive filename (e.g., `bedtime_music.mp3`, `bingo_song.mp3`). The filename becomes the title the LLM uses for matching, so name files clearly.
 
 ## Backend Behavior
 
 The agent server handles stop commands deterministically. For play requests, it sends the user text and media catalog to the LLM, which returns `media_ids` (a list of catalog IDs to play).
 
+To keep the system prompt concise, the complete CC Cycle 3 playlist set is represented
+as the pattern `cc_cycle3_week_${weekN}`, where `${weekN}` is 1 through 24, rather
+than listing all 24 weekly IDs. Other playlist IDs remain listed individually. If the
+Cycle 3 set is incomplete, its available IDs are also listed individually so the LLM
+is not told that missing weeks exist.
+
 - Single track: returns a `media_player.play_media` action
 - Multiple tracks: returns a `kids_robot.play_playlist` action with a `tracks` list
-- Stop music/audio/story: returns `media_player.media_stop`
+- Stop music/audio/story: returns `kids_robot.stop_playback`, which cancels the
+  playlist, preserves its cursor, and stops the media player
 
 The LLM picks 3-8 tracks for playlist requests ("play some bedtime music", "play a few songs").
 
@@ -112,6 +122,7 @@ Each track has a 10-minute timeout. If the player doesn't transition to idle wit
 
 ### Stop Behavior
 
-Stopping the media player mid-playlist causes the state to go to `idle`. Since the playlist handler is waiting for `playing > 3s → idle`, a stop during the loading phase (before 3s of playing) will cause the handler to timeout and abort. A stop during actual playback will be detected as completion and the next track will play. To fully stop a playlist, the user should say "stop the music" which sends `media_player.media_stop` — but the playlist handler will interpret the resulting idle as completion. 
-
-Future improvement: cancel the playlist task when a stop command is received.
+The `kids_robot.stop_playback` service cancels the active playlist task before
+calling `media_player.media_stop`. It reports the session as stopped without
+advancing the cursor, so a later resume repeats the interrupted track rather
+than skipping material that may not have finished.

@@ -18,10 +18,19 @@ MEDIA_WORDS = ("audio", "music", "song", "sound", "story")
 
 _playlist_cache: dict[str, list[dict[str, Any]]] | None = None
 
-
 def _title_from_filename(stem: str) -> str:
     """Convert a filename stem like 'bedtime_music' or 'my-lullaby' to a title."""
     return stem.replace("_", " ").replace("-", " ").title()
+
+
+def _is_playable_file(path: Path) -> bool:
+    """Return whether Home Assistant can safely resolve this media path."""
+    if not path.is_file() or path.suffix.lower() not in MEDIA_EXTENSIONS:
+        return False
+    if ".." in path.name:
+        logger.warning("Skipping unsafe media filename containing '..': %s", path)
+        return False
+    return True
 
 
 def scan_media_catalog() -> list[dict[str, Any]]:
@@ -33,8 +42,7 @@ def scan_media_catalog() -> list[dict[str, Any]]:
     catalog = []
     for path in sorted(MEDIA_DIR.iterdir()):
         if (
-            not path.is_file()
-            or path.suffix.lower() not in MEDIA_EXTENSIONS
+            not _is_playable_file(path)
             or path.name.lower() in SYSTEM_MEDIA_FILENAMES
         ):
             continue
@@ -83,7 +91,7 @@ def scan_playlist_catalog() -> dict[str, list[dict[str, Any]]]:
         # Check if this directory has audio files directly in it
         tracks = []
         for path in sorted(subdir.iterdir()):
-            if path.is_file() and path.suffix.lower() in MEDIA_EXTENSIONS:
+            if _is_playable_file(path):
                 tracks.append({
                     "file": str(path.relative_to(MEDIA_DIR)),
                     "title": _title_from_filename(path.stem),
@@ -167,8 +175,8 @@ def media_stop_response() -> ConversationResponse:
             Action(
                 type="ha_service",
                 data={
-                    "domain": "media_player",
-                    "service": "media_stop",
+                    "domain": "kids_robot",
+                    "service": "stop_playback",
                     "service_data": {},
                 },
             )
@@ -197,7 +205,12 @@ def media_play_response(reply_text: str, item: dict[str, Any]) -> ConversationRe
     )
 
 
-def media_playlist_response(reply_text: str, items: list[dict[str, Any]]) -> ConversationResponse:
+def media_playlist_response(
+    reply_text: str,
+    items: list[dict[str, Any]],
+    session_id: str | None = None,
+    start_index: int = 0,
+) -> ConversationResponse:
     """Build a response that plays multiple tracks sequentially."""
     tracks = [f"{MEDIA_BASE}/{item['file']}" for item in items]
     return ConversationResponse(
@@ -212,6 +225,8 @@ def media_playlist_response(reply_text: str, items: list[dict[str, Any]]) -> Con
                     "service": "play_playlist",
                     "service_data": {
                         "tracks": tracks,
+                        "session_id": session_id,
+                        "start_index": start_index,
                     },
                 },
             )

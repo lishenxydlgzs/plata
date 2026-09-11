@@ -77,12 +77,13 @@ class ConversationDB:
         cursor = await self._db.execute(
             """
             SELECT role, text FROM (
-                SELECT role, text, created_at FROM messages
-                ORDER BY created_at DESC
+                SELECT role, text, created_at, id FROM messages
+                WHERE conversation_id = ?
+                ORDER BY id DESC
                 LIMIT ?
-            ) ORDER BY created_at ASC
+            ) ORDER BY id ASC
             """,
-            (limit,),
+            (conversation_id, limit),
         )
         rows = await cursor.fetchall()
         return [{"role": row[0], "text": row[1]} for row in rows]

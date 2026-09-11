@@ -46,7 +46,7 @@ find . -type f -name "*.mp3" | while IFS= read -r file; do
   dir=$(dirname "$file")
   base=$(basename "$file")
   # Replace spaces with underscores, remove special chars except dots and underscores
-  normalized=$(echo "$base" | sed 's/ /_/g' | sed 's/[^A-Za-z0-9._-]//g')
+  normalized=$(echo "$base" | sed 's/ /_/g' | sed 's/[^A-Za-z0-9._-]//g' | sed 's/\.\.+/./g')
   if [ "$base" != "$normalized" ]; then
     mv "$dir/$base" "$dir/$normalized" 2>/dev/null || true
   fi

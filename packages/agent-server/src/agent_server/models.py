@@ -39,3 +39,16 @@ class ConversationResponse(BaseModel):
 class HealthResponse(BaseModel):
     status: str = "ok"
     version: str = "0.1.0"
+
+
+class PlaybackEvent(BaseModel):
+    event: str
+    track_index: int | None = None
+
+
+class FamilyValueRequest(BaseModel):
+    name: str
+    description: str = ""
+    guidance: str = ""
+    key: str | None = None
+    enabled: bool = True

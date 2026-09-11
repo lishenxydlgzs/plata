@@ -14,6 +14,7 @@ from fastapi.responses import FileResponse
 
 from contextlib import asynccontextmanager
 
+from .household import GuidanceRequest, PersonRequest, MemorySettings, BehaviorReview
 from .context import ConversationDB
 from .knowledge import KnowledgeStore
 from .maintenance import MaintenanceJob
@@ -22,7 +23,9 @@ from .models import (
     ConversationMode,
     ConversationRequest,
     ConversationResponse,
+    FamilyValueRequest,
     HealthResponse,
+    PlaybackEvent,
 )
 from .router import MessageRouter
 
@@ -106,6 +109,20 @@ async def status() -> dict:
     return {"status": "running"}
 
 
+@app.post("/playback/sessions/{session_id}/events")
+async def playback_event(session_id: str, event: PlaybackEvent) -> dict:
+    """Record trusted playback progress reported by the HA integration."""
+    try:
+        state = knowledge_store.update_playback(
+            session_id, event.event, event.track_index
+        )
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+    return {"status": "ok", "playback": state}
+
+
 @app.post("/maintenance/run")
 async def run_maintenance() -> dict:
     """Manually trigger the nightly maintenance job."""
@@ -122,6 +139,78 @@ async def graph_page() -> FileResponse:
 @app.get("/api/graph")
 async def graph_snapshot() -> dict:
     return knowledge_store.get_graph_snapshot()
+
+
+@app.get("/api/guidance-documents")
+async def list_guidance_documents(include_history: bool = False) -> list[dict]:
+    return knowledge_store.get_guidance_documents(include_history)
+
+
+@app.post("/api/guidance-documents")
+async def save_guidance_document(document: GuidanceRequest) -> dict:
+    return knowledge_store.save_guidance_document(document)
+
+
+@app.get("/api/people")
+async def list_people() -> list[dict]:
+    return knowledge_store.get_people()
+
+
+@app.post("/api/people")
+async def create_person(person: PersonRequest) -> dict:
+    return knowledge_store.create_person(person)
+
+
+@app.get("/api/learning-events")
+async def list_learning_events(person_id: str | None = None, topic: str | None = None, limit: int = 50) -> list[dict]:
+    return knowledge_store.get_events("learning_event", person_id, topic, limit)
+
+
+@app.get("/api/behavior-events")
+async def list_behavior_events(person_id: str | None = None, limit: int = 50) -> list[dict]:
+    return knowledge_store.get_events("behavior_event", person_id, limit=limit)
+
+
+@app.patch("/api/behavior-events/{event_id}")
+async def review_behavior_event(event_id: str, review: BehaviorReview) -> dict:
+    try:
+        return knowledge_store.review_behavior_event(event_id, review)
+    except KeyError as error:
+        raise HTTPException(status_code=404, detail="Behavior event not found") from error
+
+
+@app.get("/api/memory-settings")
+async def get_memory_settings() -> MemorySettings:
+    return knowledge_store.get_memory_settings()
+
+
+@app.put("/api/memory-settings")
+async def save_memory_settings(settings: MemorySettings) -> MemorySettings:
+    return knowledge_store.save_memory_settings(settings)
+
+
+@app.get("/api/family-values")
+async def list_family_values() -> list[dict]:
+    return knowledge_store.get_family_values()
+
+
+@app.post("/api/family-values")
+async def upsert_family_value(value: FamilyValueRequest) -> dict:
+    try:
+        return knowledge_store.upsert_family_value(
+            name=value.name,
+            description=value.description,
+            guidance=value.guidance,
+            key=value.key,
+            enabled=value.enabled,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from error
+
+
+@app.get("/api/kid-events")
+async def list_kid_events(child_name: str | None = None, limit: int = 50) -> list[dict]:
+    return knowledge_store.get_kid_events(child_name=child_name, limit=limit)
 
 
 @app.post("/api/graph/review-sessions")

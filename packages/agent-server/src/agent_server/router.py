@@ -19,6 +19,7 @@ class MessageRouter:
 
     async def route(self, request: ConversationRequest) -> ConversationResponse:
         if is_stop_request(request.text):
+            self._knowledge.stop_active_playback()
             response = media_stop_response()
         else:
             history = await self._db.get_history(request.conversation_id)

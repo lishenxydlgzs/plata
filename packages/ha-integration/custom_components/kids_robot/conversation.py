@@ -26,6 +26,7 @@ from .const import (
     DEFAULT_MEDIA_PLAYER_ENTITY_ID,
     DEFAULT_TIMEOUT,
     DOMAIN,
+    MIN_BACKEND_TIMEOUT,
 )
 
 _LOGGER = logging.getLogger(__name__)
@@ -61,7 +62,10 @@ class KidsRobotConversationEntity(ConversationEntity):
         self._backend_url = config_entry.data.get(
             CONF_BACKEND_URL, DEFAULT_BACKEND_URL
         )
-        self._timeout = config_entry.data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT)
+        self._timeout = max(
+            config_entry.data.get(CONF_TIMEOUT, DEFAULT_TIMEOUT),
+            MIN_BACKEND_TIMEOUT,
+        )
         self._media_player_entity_id = config_entry.data.get(
             CONF_MEDIA_PLAYER_ENTITY_ID, DEFAULT_MEDIA_PLAYER_ENTITY_ID
         )
@@ -131,7 +135,7 @@ class KidsRobotConversationEntity(ConversationEntity):
             # Allow media_player services and the integration's own safe services.
             allowed = (
                 (domain == "media_player" and service in ALLOWED_MEDIA_PLAYER_SERVICES)
-                or (domain == DOMAIN and service in {"play_playlist", "start_timer"})
+                or (domain == DOMAIN and service in {"play_playlist", "stop_playback", "start_timer"})
             )
             if not allowed:
                 _LOGGER.warning("Ignoring unsupported HA service action: %s", action)

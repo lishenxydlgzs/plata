@@ -108,7 +108,7 @@ async def test_conversation_returns_media_stop_action(client: AsyncClient):
     assert resp.status_code == 200
     data = resp.json()
     assert data["reply_text"] == "Okay, I'll stop the audio."
-    assert data["actions"][0]["data"]["service"] == "media_stop"
+    assert data["actions"][0]["data"]["service"] == "stop_playback"
 
 
 async def test_conversation_sets_timer_from_llm(
@@ -210,6 +210,56 @@ async def test_conversation_unknown_media_id_falls_back_to_chat(
     assert data["continue_conversation"] is True
 
 
+async def test_cc_transcription_variant_is_sent_to_llm_with_guidance(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    from agent_server.modes import chat
+
+    called = False
+
+    async def fake_generate_chat_json(system_prompt, history, user_text):
+        nonlocal called
+        called = True
+        assert user_text == "Play CC Psycho 3 week one"
+        assert '"CC Psycho 3"' in system_prompt
+        return {"reply_text": "I understand the CC request.", "media_ids": []}
+
+    monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
+    response = await client.post(
+        "/conversation",
+        json={
+            "text": "Play CC Psycho 3 week one",
+            "conversation_id": "cc-llm-managed",
+        },
+    )
+
+    assert response.status_code == 200
+    assert called is True
+    assert response.json()["reply_text"] == "I understand the CC request."
+
+
+def test_cycle3_playlists_are_compacted_in_llm_prompt():
+    from agent_server.modes.chat import _format_playlist_catalog
+
+    playlists = {f"cc_cycle3_week_{week}": [] for week in range(1, 25)}
+    playlists["bedtime_favorites"] = []
+
+    formatted = _format_playlist_catalog(playlists)
+
+    assert "cc_cycle3_week_${weekN}" in formatted
+    assert "where ${weekN} is 1 through 24" in formatted
+    assert "- bedtime_favorites" in formatted
+    assert "- cc_cycle3_week_1\n" not in formatted
+
+
+def test_incomplete_cycle3_playlist_set_is_listed_explicitly():
+    from agent_server.modes.chat import _format_playlist_catalog
+
+    formatted = _format_playlist_catalog({"cc_cycle3_week_1": []})
+
+    assert formatted == "- cc_cycle3_week_1"
+
+
 async def test_status(client: AsyncClient):
     resp = await client.get("/status")
     assert resp.status_code == 200
@@ -225,6 +275,113 @@ async def test_graph_review_page_and_snapshot(client: AsyncClient):
     graph = await client.get("/api/graph")
     assert graph.status_code == 200
     assert set(graph.json()) == {"nodes", "links"}
+
+
+async def test_family_values_api_upserts_and_lists_values(client: AsyncClient):
+    created = await client.post(
+        "/api/family-values",
+        json={
+            "name": "Helpfulness",
+            "description": "Look for chances to serve others.",
+            "guidance": "Encourage specific helping behavior.",
+        },
+    )
+
+    assert created.status_code == 200
+    value = created.json()
+    assert value["key"] == "helpfulness"
+    assert value["name"] == "Helpfulness"
+    assert value["enabled"] is True
+
+    listed = await client.get("/api/family-values")
+    assert listed.status_code == 200
+    assert any(item["key"] == "helpfulness" for item in listed.json())
+
+
+async def test_family_values_are_included_in_chat_prompt(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    from agent_server.modes import chat
+
+    knowledge_store.upsert_family_value(
+        name="Helpfulness",
+        description="Look for chances to serve others.",
+        guidance="Encourage specific helping behavior.",
+    )
+
+    async def fake_generate_chat_json(system_prompt, history, user_text):
+        assert "Family values for encouragement and correction" in system_prompt
+        assert "helpfulness: Helpfulness" in system_prompt
+        return {
+            "reply_text": "That was a kind way to help.",
+            "media_ids": [],
+            "kid_events": [],
+        }
+
+    monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
+
+    response = await client.post(
+        "/conversation",
+        json={
+            "text": "Sample Child helped clean up toys.",
+            "conversation_id": "family-value-prompt",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reply_text"] == "That was a kind way to help."
+
+
+async def test_parent_described_kid_event_is_logged_with_value(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    from agent_server.modes import chat
+
+    value = knowledge_store.upsert_family_value(
+        name="Helpfulness",
+        description="Look for chances to serve others.",
+        guidance="Encourage specific helping behavior.",
+    )
+
+    async def fake_generate_chat_json(system_prompt, history, user_text):
+        return {
+            "reply_text": "Sample Child showed helpfulness by cleaning up.",
+            "media_ids": [],
+            "topics": ["helpfulness"],
+            "facts": [],
+            "kid_events": [
+                {
+                    "child_name": "Sample Child",
+                    "summary": "helped clean up toys",
+                    "event_type": "encouragement",
+                    "matched_value_keys": ["helpfulness"],
+                    "parent_note": "reward candidate",
+                    "confidence": 0.9,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
+
+    response = await client.post(
+        "/conversation",
+        json={
+            "text": "Sample Child helped clean up toys.",
+            "conversation_id": "kid-event-log",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["reply_text"] == "Sample Child showed helpfulness by cleaning up."
+
+    events = (await client.get("/api/kid-events?child_name=Sample%20Child")).json()
+    assert events[0]["summary"] == "helped clean up toys"
+    assert events[0]["event_type"] == "encouragement"
+    assert events[0]["matched_value_keys"] == ["helpfulness"]
+
+    graph = await client.get("/api/graph")
+    links = graph.json()["links"]
+    assert any(link["type"] == "reflects" and link["to"] == value["id"] for link in links)
 
 
 async def test_unchanged_media_sync_preserves_updated_timestamp(client: AsyncClient):
