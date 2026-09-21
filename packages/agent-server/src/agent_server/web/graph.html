@@ -19,19 +19,48 @@
     .legend { display:flex; flex-wrap:wrap; gap:9px; padding:11px 16px; color:var(--muted); font-size:12px }.dot { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:4px }
     .review-panel { position:sticky; top:18px; align-self:start; display:flex; flex-direction:column; max-height:calc(100vh - 36px) }.review-panel #chat { flex:1; height:auto; min-height:180px }.review-panel form { flex:none }
     @media(max-width:900px) { main { grid-template-columns:1fr } #graph { height:330px } .review-panel { position:static; max-height:none } .review-panel #chat { height:400px } }
-  </style>
+  [hidden]{display:none!important}.view-nav{display:flex;gap:8px;padding:0 22px 12px}.view-nav button[aria-pressed="false"]{background:#e4e8ef;color:#344054}.journal-pad{padding:12px 16px}.journal-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px}.journal-tools label{display:flex;gap:8px;align-items:center;font-size:13px}#journal-list{display:flex;flex-wrap:wrap;gap:6px;max-height:140px;overflow:auto}.journal-prose{white-space:pre-wrap;line-height:1.65}.journal-pad h3{font-size:15px;color:#39457a}#journal-chat{overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:200px;max-height:48vh;padding:14px}#journal-form{flex-direction:column}textarea{font:inherit;resize:vertical;padding:10px;min-height:90px;border:1px solid var(--line);border-radius:6px}#journal-status{font-size:13px;margin:0}#journal-retry{margin:10px}#journal-connections{display:flex;flex-wrap:wrap;gap:6px}button[aria-current="true"]{outline:2px solid var(--accent)}
+  #journal-list .session{white-space:normal;text-align:left;overflow-wrap:anywhere} .journal-prose,.bubble{overflow-wrap:anywhere} blockquote{margin:12px 0;padding:8px 14px;border-left:3px solid var(--accent);background:#f6f5ff} #journal-chat{flex:1} #journal-sessions{flex:1;min-width:0;width:auto} #journal-note{min-height:180px}
+</style>
 </head>
 <body>
-<header><h1>Plata’s knowledge graph</h1></header>
-<main>
-  <section class="panel"><h2>Graph</h2><svg id="graph" viewBox="0 0 800 420" aria-label="Knowledge graph"></svg><div class="legend" id="legend"></div><div class="toolbar"><input id="search" placeholder="Filter entities, facts, and properties"><select id="type"><option value="">All types</option></select></div><div class="counts" id="counts"></div><div id="entity-list"></div></section>
-  <section class="panel review-panel"><h2>Review and refine</h2><div id="sessions"></div><div id="chat"></div><form id="form"><input id="message" autocomplete="off" placeholder="e.g. Merge the duplicate facts about the family dog"><button>Send</button></form></section>
+<header><h1>Plata household workspace</h1></header>
+<nav class="view-nav"><button id="view-journal">Log book</button><button id="view-graph">Graph</button></nav>
+<main id="journal-workspace">
+<section class="panel journal-panel"><h2>Past notes</h2>
+<div id="journal-list" class="journal-pad" aria-label="Past notes"></div>
+<div id="journal-note" class="journal-pad"><h3>A little at a time</h3><p>Talk through an experience, a thought at a time. Notes take shape as the conversation unfolds, keeping your original words.</p></div>
+<details class="journal-pad" id="journal-history" hidden><summary>Earlier versions</summary><div id="journal-revisions"></div></details>
+<div id="journal-connections" class="journal-pad"></div></section>
+<section class="panel review-panel"><h2>Log book conversation</h2>
+<div class="journal-tools"><button id="journal-new">New conversation</button><select id="journal-sessions" aria-label="Past conversations"><option value="">New conversation</option></select></div>
+<p id="journal-status" class="journal-pad" role="status">Write whenever something comes to mind.</p>
+<div id="journal-chat" aria-label="Log book messages"></div>
+<button id="journal-retry" hidden>Retry message</button>
+<form id="journal-form"><textarea id="journal-input" rows="3" maxlength="8000" placeholder="What happened, or what are you thinking about?" aria-label="Message"></textarea><button>Send</button></form>
+</section></main>
+<main id="graph-workspace">
+  <section class="panel"><h2>Plata’s knowledge graph</h2><svg id="graph" viewBox="0 0 800 420" aria-label="Knowledge graph"></svg><div class="legend" id="legend"></div><div class="toolbar"><input id="search" placeholder="Filter entities, facts, and properties"><select id="type"><option value="">All types</option></select></div><div class="counts" id="counts"></div><div id="entity-list"></div></section>
+  <section class="panel review-panel"><h2>Review and refine</h2><div id="sessions"></div><div id="chat"></div><form id="form"><input id="message" autocomplete="off" placeholder="Ask about a record or describe a correction"><button>Send</button></form></section>
 </main>
 <script>
 const colors={guidance_document:'#1f9d8a',person:'#d65b98',learning_event:'#348cd1',behavior_event:'#e4a11b',fact:'#ff8b5c',family_value:'#1f9d8a',kid_event:'#e4a11b',message:'#4c97e8',topic:'#45b999',media:'#9b75d8'}; let graph={nodes:[],links:[]}, sessionId, forceFrame, graphPositions=new Map(), graphTransform={x:0,y:0,scale:1};
 const $=s=>document.querySelector(s), esc=s=>String(s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 const formatTime=value=>value?new Intl.DateTimeFormat(undefined,{dateStyle:'medium',timeStyle:'short'}).format(new Date(value)):'Unknown';
-async function api(url, options){const r=await fetch(url,options); if(!r.ok) throw new Error((await r.json()).detail||r.statusText); return r.json()}
+async function api(url, options){
+  let r;
+  try { r=await fetch(url,options); }
+  catch { throw new Error('Cannot reach the server. Check your connection and try again.'); }
+  const raw=await r.text();
+  let data;
+  try { data=JSON.parse(raw); } catch { data=null; }
+  if(!r.ok){
+    const detail=typeof data?.detail==='string'?data.detail:null;
+    throw new Error(detail || `The server could not complete the request (HTTP ${r.status}). Please try again.`);
+  }
+  if(data===null) throw new Error('The server returned an unreadable response. Please try again.');
+  return data;
+}
 function visibleGraphNodes(){
   // A type-balanced sample avoids a large media catalog hiding every topic.
   const perType=20, groups={};
@@ -58,14 +87,15 @@ function renderGraph(){
   svg.onpointerup=event=>{if(gesture?.kind==='node'){gesture.node.fixed=false;graphPositions.set(gesture.node.id,{x:gesture.node.x,y:gesture.node.y})}gesture=undefined;svg.releasePointerCapture(event.pointerId)};
   $('#legend').innerHTML=Object.entries(colors).map(([type,color])=>`<span><i class="dot" style="background:${color}"></i>${type}</span>`).join('')+(graph.nodes.length>shown.length?` <span>Showing up to 20 recent nodes per type (${shown.length} total)</span>`:'')+' <span>Drag nodes · scroll to zoom · drag background to pan</span>';
 }
-function renderList(){const q=$('#search').value.toLowerCase(), type=$('#type').value; const nodes=graph.nodes.filter(n=>!type||n.type===type).filter(n=>JSON.stringify(n).toLowerCase().includes(q)); $('#counts').textContent=`${nodes.length} of ${graph.nodes.length} entities · ${graph.links.length} links · newest updates first`; $('#entity-list').innerHTML=nodes.map(n=>`<div class="entity"><strong><span class="pill">${esc(n.type)}</span>${esc(n.name)}</strong><div class="meta">Updated ${esc(formatTime(n.updated_at))} · Created ${esc(formatTime(n.created_at))}</div><div class="meta">${esc(n.id)}${Object.keys(n.properties).length?' · '+esc(JSON.stringify(n.properties)):''}</div></div>`).join('')||'<div class="entity meta">No matching entities.</div>'}
+function renderList(){const q=$('#search').value.toLowerCase(), type=$('#type').value; const nodes=graph.nodes.filter(n=>!type||n.type===type).filter(n=>JSON.stringify(n).toLowerCase().includes(q)); $('#counts').textContent=`${nodes.length} of ${graph.nodes.length} entities · ${graph.links.length} links · newest updates first`; $('#entity-list').innerHTML=nodes.map(n=>`<div class="entity"><strong><span class="pill">${esc(n.type)}</span>${esc(n.name)}</strong><div class="meta">Updated ${esc(formatTime(n.updated_at))} · Created ${esc(formatTime(n.created_at))}</div><div class="meta">${esc(n.id)}${Object.keys(n.properties).length?' · '+esc(JSON.stringify(n.properties)):''}</div>${['message','kid_event','behavior_event','learning_event','fact'].includes(n.type)?`<button class="review-record" data-id="${esc(n.id)}">Review</button>`:''}</div>`).join('')||'<div class="entity meta">No matching entities.</div>';document.querySelectorAll('.review-record').forEach(b=>b.onclick=()=>{const input=$('#message');input.value=`Please review record ${b.dataset.id}. `;input.focus()})}
 async function loadGraph(){const selectedType=$('#type').value;graph=await api('/api/graph'); const types=[...new Set(graph.nodes.map(n=>n.type))]; $('#type').innerHTML='<option value="">All types</option>'+types.map(t=>`<option>${esc(t)}</option>`).join(''); if(types.includes(selectedType))$('#type').value=selectedType; renderGraph();renderList()}
 function addBubble(text,role,actions=[]){const e=document.createElement('div');e.className='bubble '+role;e.innerHTML=esc(text)+actions.map(x=>`<div class="action">${x.applied?'Applied':'Not applied'}: ${esc(JSON.stringify(x.action))}</div>`).join('');$('#chat').append(e);$('#chat').scrollTop=999999}
 async function loadSessions(){const sessions=await api('/api/graph/review-sessions');$('#sessions').innerHTML=`<button id="new-review" class="session">New review</button>`+sessions.map(s=>`<button class="session ${s.id===sessionId?'active':''}" data-id="${s.id}">${esc(s.title)}</button>`).join(''); $('#new-review').onclick=startNewReview; document.querySelectorAll('.session[data-id]').forEach(b=>b.onclick=()=>openSession(b.dataset.id));}
 function startNewReview(){sessionId=undefined;$('#chat').innerHTML='';loadSessions()}
 async function openSession(id){sessionId=id; const s=await api('/api/graph/review-sessions/'+id);$('#chat').innerHTML='';s.messages.forEach(m=>addBubble(m.text,m.role));await loadSessions()}
 async function startSession(){const s=await api('/api/graph/review-sessions',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({})});sessionId=s.id}
-$('#form').onsubmit=async e=>{e.preventDefault();const input=$('#message'),text=input.value.trim();if(!text)return;const b=e.submitter;b.disabled=true;try{if(!sessionId)await startSession();input.value='';addBubble(text,'user');const r=await api('/api/graph/review-sessions/'+sessionId+'/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});addBubble(r.reply_text,'model',r.actions);await loadGraph();await loadSessions()}catch(err){addBubble('Error: '+err.message,'model')}finally{b.disabled=false}};
+$('#form').onsubmit=async e=>{e.preventDefault();const input=$('#message'),text=input.value.trim();if(!text)return;const b=e.submitter||$('#form button');b.disabled=true;input.disabled=true;$('#sessions').style.pointerEvents='none';try{if(!sessionId)await startSession();input.value='';addBubble(text,'user');const r=await api('/api/graph/review-sessions/'+sessionId+'/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});addBubble(r.reply_text,'model',r.actions);await loadGraph();await loadSessions()}catch(err){addBubble(err.message,'model');input.value=text}finally{b.disabled=false;input.disabled=false;$('#sessions').style.pointerEvents='';input.focus()}};
 $('#search').oninput=renderList;$('#type').onchange=renderList;(async()=>{await loadGraph();await loadSessions()})().catch(e=>alert(e.message));setInterval(()=>loadGraph().catch(console.error),60000);
 </script>
+<script src="/web/journal.js"></script>
 </body></html>

@@ -418,7 +418,7 @@ async def test_graph_review_persists_and_applies_requested_update(
 
     async def fake_review_response(system_prompt, history, user_text):
         assert "Review Test is a sample" in system_prompt
-        assert history[-1] == {"role": "user", "text": user_text}
+        assert history == []  # Current user text is supplied separately, exactly once.
         return {
             "reply_text": "I updated the display wording.",
             "actions": [{"type": "update", "id": fact.id[:8], "new_name": "Review Test is a test sample"}],

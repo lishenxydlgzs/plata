@@ -3,6 +3,7 @@
 ## Agent Server
 
 ### Implemented
+- [x] Reflective Log book — notes browser and ongoing reflective conversation with optional CRUD tools, validated verbatim quotes, preserved messages/revisions, ontology links, and family-only retrieval
 
 - [x] POST /conversation endpoint — accepts JSON with text, conversation_id, language, source, device_id, satellite_id, timestamp
 - [x] POST /hardware/button endpoint — hardware event entry point
@@ -22,6 +23,7 @@
 - [x] Fact extraction with provenance — LLM extracts explicit user statements as structured facts, stored with confidence scores and linked to source messages
 - [x] Long-term memory — system prompt includes known facts and recency-weighted topics across all sessions
 - [x] Knowledge graph review UI — visualize graph and persist parent-directed maintenance chats
+- [x] Graph record corrections — review messages and household events, preserve correction provenance, and show retryable server errors
 - [x] Resumable playlist playback — persist per-playlist progress and resume interrupted CC weeks
 - [x] Household guidance documents — preserve Markdown and immutable content revisions, with application instructions separate from content
 - [x] Behavior event logging — record reports and model interpretations separately, link guidance revisions, and append repair/review updates

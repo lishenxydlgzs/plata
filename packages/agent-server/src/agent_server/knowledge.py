@@ -47,7 +47,7 @@ class _TypeRegistry:
     _entity_types = [
         *[EntityType(id=kind, name=kind.replace("_", " ").title(), properties={},
                      system_defined=True, created_at="", updated_at="")
-          for kind in ("guidance_document", "person", "learning_event", "behavior_event")],
+          for kind in ("guidance_document", "person", "learning_event", "behavior_event", "journal", "journal_entry", "reflection_revision", "journal_session", "journal_message")],
         EntityType(id="media", name="Media", properties={}, system_defined=True, created_at="", updated_at="", description="A playable audio/video file"),
         EntityType(id="topic", name="Topic", properties={}, system_defined=True, created_at="", updated_at="", description="A subject or theme"),
         EntityType(id="message", name="Message", properties={}, system_defined=True, created_at="", updated_at="", description="A user message in a conversation"),
@@ -58,6 +58,7 @@ class _TypeRegistry:
         EntityType(id="playback_session", name="Playback Session", properties={}, system_defined=True, created_at="", updated_at="", description="Persistent progress through a playlist"),
     ]
     _link_types = [
+        *[LinkType(id=k, name=k.replace("_", " ").title(), from_entity_type="*", to_entity_type="*", bidirectional=False, created_at="") for k in ("has_entry", "has_revision", "derived_from")],
         LinkType(id="involves", name="Involves", from_entity_type="*", to_entity_type="person", bidirectional=False, created_at=""),
         LinkType(id="interpreted_using", name="Interpreted using", from_entity_type="*", to_entity_type="guidance_document", bidirectional=False, created_at=""),
         LinkType(id="about", name="About", from_entity_type="*", to_entity_type="topic", bidirectional=False, created_at=""),

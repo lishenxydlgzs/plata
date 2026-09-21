@@ -14,11 +14,13 @@ from fastapi.responses import FileResponse
 
 from contextlib import asynccontextmanager
 
+from .journal import JournalService, NewJournal, JournalPatch, EntryRequest
+from .logbook_chat import LogbookChat, ChatRequest
 from .household import GuidanceRequest, PersonRequest, MemorySettings, BehaviorReview
 from .context import ConversationDB
 from .knowledge import KnowledgeStore
 from .maintenance import MaintenanceJob
-from .graph_review import GraphReviewService
+from .graph_review import GraphReviewService, ReviewUnavailable
 from .models import (
     ConversationMode,
     ConversationRequest,
@@ -56,6 +58,8 @@ knowledge_store = KnowledgeStore()
 message_router = MessageRouter(conversation_db, knowledge_store)
 maintenance_job = MaintenanceJob(knowledge_store)
 graph_review = GraphReviewService(knowledge_store, conversation_db, maintenance_job)
+journals = JournalService(knowledge_store)
+logbook_chat = LogbookChat(journals)
 WEB_DIR = Path(__file__).parent / "web"
 
 
@@ -133,7 +137,7 @@ async def run_maintenance() -> dict:
 @app.get("/graph", include_in_schema=False)
 async def graph_page() -> FileResponse:
     """Private visual explorer and parent-directed graph maintenance UI."""
-    return FileResponse(WEB_DIR / "graph.html")
+    return FileResponse(WEB_DIR / "graph.html", headers={"Cache-Control": "no-store"})
 
 
 @app.get("/api/graph")
@@ -241,3 +245,86 @@ async def send_graph_review_message(session_id: str, body: dict) -> dict:
         return await graph_review.handle_message(session_id, text)
     except KeyError:
         raise HTTPException(status_code=404, detail="Review session not found")
+    except ReviewUnavailable:
+        raise HTTPException(status_code=503, detail="The review assistant is temporarily unavailable. No changes were applied. Please try again.")
+
+
+@app.get("/api/logbook/sessions")
+async def logbook_sessions():
+    return logbook_chat.sessions()
+
+
+@app.post("/api/logbook/sessions")
+async def new_logbook_session():
+    return logbook_chat.create_session()
+
+
+@app.get("/api/logbook/sessions/{session_id}")
+async def get_logbook_session(session_id: str):
+    try:
+        return logbook_chat.session(session_id)
+    except KeyError:
+        raise HTTPException(404, "Conversation not found")
+
+
+@app.post("/api/logbook/sessions/{session_id}/messages")
+async def logbook_message(session_id: str, request: ChatRequest):
+    try:
+        return await logbook_chat.send(session_id, request)
+    except KeyError:
+        raise HTTPException(404, "Conversation or note not found")
+    except Exception:
+        logger.warning("Log book chat failed; saved messages retained", exc_info=False)
+        raise HTTPException(503, "Could not finish. Your saved message is available below; retry to continue.")
+
+
+@app.get("/api/journals")
+async def list_journals():
+    return journals.list()
+
+
+@app.post("/api/journals")
+async def new_journal(request: NewJournal):
+    return journals.create(request)
+
+
+@app.get("/api/journals/{journal_id}")
+async def get_journal(journal_id: str):
+    try:
+        return journals.get(journal_id)
+    except KeyError:
+        raise HTTPException(404, "Reflection not found")
+
+
+@app.patch("/api/journals/{journal_id}")
+async def patch_journal(journal_id: str, request: JournalPatch):
+    try:
+        return journals.patch(journal_id, request)
+    except KeyError:
+        raise HTTPException(404, "Reflection not found")
+
+
+@app.post("/api/journals/{journal_id}/entries")
+async def append_journal(journal_id: str, request: EntryRequest):
+    try:
+        return journals.append(journal_id, request)
+    except KeyError:
+        raise HTTPException(404, "Reflection not found")
+    except ValueError as error:
+        raise HTTPException(422, str(error))
+
+
+@app.post("/api/journals/{journal_id}/organize")
+async def organize_journal(journal_id: str):
+    try:
+        return await journals.organize(journal_id)
+    except KeyError:
+        raise HTTPException(404, "Reflection not found")
+    except Exception:
+        logger.warning("Reflection organization failed; original entries retained", exc_info=False)
+        raise HTTPException(503, "Your original entry is saved. Organization could not finish; please retry.")
+
+
+@app.get("/web/journal.js", include_in_schema=False)
+async def journal_script():
+    return FileResponse(WEB_DIR / "journal.js", media_type="application/javascript", headers={"Cache-Control": "no-store"})
