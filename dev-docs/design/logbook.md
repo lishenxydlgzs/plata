@@ -96,3 +96,14 @@ and no completion/save ritual. Replies address the parent's thoughts; tool recei
 are secondary. Original quotes may span several user turns, while assistant
 suggestions remain clearly separate. Do not infer the parent's reflection from a
 bare observation or repeatedly ask questions when they simply want to continue.
+
+## Note-generation timeout correction — 2026-09-21
+
+Live note generation hit the eight-second voice-oriented deadline on two model
+attempts, then the last fallback returned 404. Log book calls now use a separate
+45-second per-model deadline and 4,096 output tokens for structured notes and
+verbatim quotes. Ordinary conversation retains its existing timeout and output
+budget. Saved-message retries remain idempotent.
+
+The default fallback list also drops the model rejected by the live provider.
+Explicit GEMINI_MODELS overrides remain supported.

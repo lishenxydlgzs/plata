@@ -143,3 +143,11 @@ async def test_conversation_can_gather_observation_then_reflection(chat, monkeyp
     await chat.send(sid, ChatRequest(text='Let me think a little more.', request_id='thinking'))
     assert len(chat.journals.get(n['id'])['revisions']) == 1
     assert len(chat.session(sid)['messages']) == 6
+
+@pytest.mark.asyncio
+async def test_note_generation_uses_its_own_deadline_and_output_budget(monkeypatch):
+    from agent_server import logbook_chat
+    model = AsyncMock(return_value=output())
+    monkeypatch.setattr(logbook_chat, '_generate_chat_json', model)
+    await logbook_chat.generate_chat_json('prompt', [], 'message')
+    model.assert_awaited_once_with('prompt', [], 'message', timeout_seconds=45.0, max_output_tokens=4096)

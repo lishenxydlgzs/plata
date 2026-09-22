@@ -92,3 +92,19 @@ async def test_chat_json_has_room_for_structured_learning_records(monkeypatch):
 
     monkeypatch.setattr(llm, "get_client", lambda: SimpleNamespace(aio=SimpleNamespace(models=FakeModels())))
     assert (await llm.generate_chat_json("system", [], "Learning report"))["reply_text"] == "Keep going!"
+
+async def test_structured_generation_can_override_voice_deadline(monkeypatch):
+    deadlines = []
+    async def wait_for(awaitable, timeout):
+        deadlines.append(timeout)
+        return await awaitable
+    class FakeModels:
+        async def generate_content(self, **kwargs):
+            assert kwargs['config'].max_output_tokens == 4096
+            return SimpleNamespace(text='{"reply":"Hello","tool_calls":[]}')
+    monkeypatch.setattr(llm, 'get_client', lambda: SimpleNamespace(aio=SimpleNamespace(models=FakeModels())))
+    monkeypatch.setattr(llm.asyncio, 'wait_for', wait_for)
+    monkeypatch.setenv('GEMINI_MODEL_TIMEOUT_SECONDS', '8')
+    await llm.generate_chat_json('system', [], 'note', timeout_seconds=45, max_output_tokens=4096)
+    assert deadlines == [45]
+    assert llm.get_model_timeout_seconds() == 8

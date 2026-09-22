@@ -14,7 +14,6 @@ _client: genai.Client | None = None
 DEFAULT_MODELS = (
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
-    "gemini-2.5-flash-lite",
 )
 FALLBACK_STATUS_CODES = {404, 429, 500, 502, 503, 504}
 DEFAULT_MODEL_TIMEOUT_SECONDS = 8.0
@@ -67,12 +66,13 @@ def _is_fallback_error(error: Exception) -> bool:
 
 
 async def generate_content_with_fallback(
-    contents: list[types.Content], config: types.GenerateContentConfig
+    contents: list[types.Content], config: types.GenerateContentConfig,
+    *, timeout_seconds: float | None = None
 ):
     """Generate content, moving to another configured model on temporary failures."""
     client = get_client()
     models = get_models()
-    timeout = get_model_timeout_seconds()
+    timeout = get_model_timeout_seconds() if timeout_seconds is None else timeout_seconds
     for index, model in enumerate(models):
         try:
             return await asyncio.wait_for(
@@ -132,7 +132,8 @@ async def generate(system_prompt: str, conversation_history: list[dict], user_te
 
 
 async def generate_chat_json(
-    system_prompt: str, conversation_history: list[dict], user_text: str
+    system_prompt: str, conversation_history: list[dict], user_text: str,
+    *, timeout_seconds: float | None = None, max_output_tokens: int = 1536
 ) -> dict:
     """Generate a structured JSON response with conversation history."""
     contents = []
@@ -152,10 +153,11 @@ async def generate_chat_json(
             config=types.GenerateContentConfig(
                 system_instruction=system_prompt,
                 # Allow the spoken reply plus bounded learning/behavior records.
-                max_output_tokens=1536,
+                max_output_tokens=max_output_tokens,
                 temperature=0.7,
                 response_mime_type="application/json",
             ),
+            **({"timeout_seconds": timeout_seconds} if timeout_seconds is not None else {}),
         )
         text = response.text
         if not text:

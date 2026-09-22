@@ -7,7 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from .journal import OrganizedNote, _dict
-from .llm import generate_chat_json
+from .llm import generate_chat_json as _generate_chat_json
+
+
+async def generate_chat_json(prompt, history, text):
+    """Structured notes need more time and output space than short voice replies."""
+    return await _generate_chat_json(
+        prompt, history, text, timeout_seconds=45.0, max_output_tokens=4096)
 
 
 class ChatRequest(BaseModel):
