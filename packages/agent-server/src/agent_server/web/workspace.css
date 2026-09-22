@@ -1,0 +1,10 @@
+.workspace-header{min-height:64px;padding:0 28px;background:#19213a;color:#fff;display:flex;align-items:center;justify-content:space-between;gap:24px;font:14px/1.5 system-ui,-apple-system,sans-serif}
+.workspace-header a{color:#dee1ff;text-decoration:none}
+.workspace-header .workspace-brand{font-size:18px;font-weight:700;white-space:nowrap}
+.workspace-brand span{font-size:13px;font-weight:400;color:#b9c2d7;margin-left:10px}
+.workspace-header nav{display:flex;align-items:stretch;gap:24px;align-self:stretch}
+.workspace-header nav a{display:flex;align-items:center;padding:18px 0 15px;border-bottom:3px solid transparent}
+.workspace-header nav a[aria-current="page"]{color:#fff;border-bottom-color:#aba5ff}
+.workspace-header a:focus-visible{outline:2px solid #aba5ff;outline-offset:4px}
+main.workspace-main{max-width:1400px;margin:28px auto;padding:0 24px}
+@media(max-width:700px){.workspace-header{padding:0 16px;gap:12px;flex-wrap:wrap}.workspace-brand span{display:none}.workspace-header nav{gap:20px}main.workspace-main{margin:20px auto;padding:0 16px}}

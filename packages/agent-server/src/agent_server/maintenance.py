@@ -10,10 +10,8 @@ Uses LLM calls iteratively to identify and fix issues in the knowledge graph:
 Budget-capped to avoid exhausting the free-tier RPM limit.
 """
 
-import asyncio
 import json
 import logging
-from datetime import datetime, time, timezone
 from typing import Any
 
 from google import genai
@@ -25,7 +23,6 @@ from .llm import generate_content_with_fallback
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 5
-RUN_AT_HOUR = 0  # midnight local time
 
 MAINTENANCE_PROMPT = """\
 You are a knowledge graph maintenance agent. Your job is to inspect the ontology \
@@ -72,40 +69,10 @@ Be conservative — when in doubt, do nothing.\
 class MaintenanceJob:
     def __init__(self, knowledge: KnowledgeStore) -> None:
         self._knowledge = knowledge
-        self._running = False
-        self._task: asyncio.Task | None = None
-
-    def start_scheduler(self) -> None:
-        """Start the background scheduler that runs maintenance at the configured hour."""
-        if self._task:
-            return
-        self._task = asyncio.ensure_future(self._schedule_loop())
-        logger.info("Maintenance scheduler started (runs at %02d:00)", RUN_AT_HOUR)
-
-    def stop(self) -> None:
-        if self._task:
-            self._task.cancel()
-            self._task = None
 
     async def run_now(self) -> dict[str, Any]:
-        """Run the maintenance job immediately. Returns a summary."""
+        """Execute maintenance; scheduling and run history belong to the jobs service."""
         return await self._run()
-
-    async def _schedule_loop(self) -> None:
-        """Wait until the target hour each day, then run."""
-        while True:
-            now = datetime.now()
-            target = datetime.combine(now.date(), time(hour=RUN_AT_HOUR))
-            if now >= target:
-                from datetime import timedelta
-                target += timedelta(days=1)
-            wait_seconds = (target - now).total_seconds()
-            logger.info("Maintenance: next run in %.0f seconds (at %s)", wait_seconds, target)
-            await asyncio.sleep(wait_seconds)
-            try:
-                await self._run()
-            except Exception:
-                logger.exception("Maintenance job failed")
 
     async def _run(self) -> dict[str, Any]:
         """Execute the agentic maintenance loop."""
@@ -127,7 +94,7 @@ class MaintenanceJob:
                 result = await self._call_llm(prompt)
             except Exception:
                 logger.exception("Maintenance: LLM call failed at iteration %d", iteration + 1)
-                break
+                raise
 
             actions = result.get("actions", [])
             done = result.get("done", True)
@@ -135,8 +102,8 @@ class MaintenanceJob:
             logger.info("Maintenance: iteration %d — %d actions, done=%s", iteration + 1, len(actions), done)
 
             for action in actions:
-                self._execute_action(action)
-                total_actions += 1
+                if self.execute_action(action):
+                    total_actions += 1
 
             if done or not actions:
                 break

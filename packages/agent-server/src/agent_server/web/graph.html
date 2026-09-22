@@ -22,11 +22,11 @@
   [hidden]{display:none!important}.view-nav{display:flex;gap:8px;padding:0 22px 12px}.view-nav button[aria-pressed="false"]{background:#e4e8ef;color:#344054}.journal-pad{padding:12px 16px}.journal-tools{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px}.journal-tools label{display:flex;gap:8px;align-items:center;font-size:13px}#journal-list{display:flex;flex-wrap:wrap;gap:6px;max-height:140px;overflow:auto}.journal-prose{white-space:pre-wrap;line-height:1.65}.journal-pad h3{font-size:15px;color:#39457a}#journal-chat{overflow:auto;display:flex;flex-direction:column;gap:10px;min-height:200px;max-height:48vh;padding:14px}#journal-form{flex-direction:column}textarea{font:inherit;resize:vertical;padding:10px;min-height:90px;border:1px solid var(--line);border-radius:6px}#journal-status{font-size:13px;margin:0}#journal-retry{margin:10px}#journal-connections{display:flex;flex-wrap:wrap;gap:6px}button[aria-current="true"]{outline:2px solid var(--accent)}
   #journal-list .session{white-space:normal;text-align:left;overflow-wrap:anywhere} .journal-prose,.bubble{overflow-wrap:anywhere} blockquote{margin:12px 0;padding:8px 14px;border-left:3px solid var(--accent);background:#f6f5ff} #journal-chat{flex:1} #journal-sessions{flex:1;min-width:0;width:auto} #journal-note{min-height:180px}
 </style>
+<link rel="stylesheet" href="/web/workspace.css">
 </head>
 <body>
-<header><h1>Plata household workspace</h1></header>
-<nav class="view-nav"><button id="view-journal">Log book</button><button id="view-graph">Graph</button></nav>
-<main id="journal-workspace">
+<!-- workspace-navigation -->
+<main class="workspace-main" id="journal-workspace">
 <section class="panel journal-panel"><h2>Past notes</h2>
 <div id="journal-list" class="journal-pad" aria-label="Past notes"></div>
 <div id="journal-note" class="journal-pad"><h3>A little at a time</h3><p>Talk through an experience, a thought at a time. Notes take shape as the conversation unfolds, keeping your original words.</p></div>
@@ -39,7 +39,7 @@
 <button id="journal-retry" hidden>Retry message</button>
 <form id="journal-form"><textarea id="journal-input" rows="3" maxlength="8000" placeholder="What happened, or what are you thinking about?" aria-label="Message"></textarea><button>Send</button></form>
 </section></main>
-<main id="graph-workspace">
+<main class="workspace-main" id="graph-workspace">
   <section class="panel"><h2>Plata’s knowledge graph</h2><svg id="graph" viewBox="0 0 800 420" aria-label="Knowledge graph"></svg><div class="legend" id="legend"></div><div class="toolbar"><input id="search" placeholder="Filter entities, facts, and properties"><select id="type"><option value="">All types</option></select></div><div class="counts" id="counts"></div><div id="entity-list"></div></section>
   <section class="panel review-panel"><h2>Review and refine</h2><div id="sessions"></div><div id="chat"></div><form id="form"><input id="message" autocomplete="off" placeholder="Ask about a record or describe a correction"><button>Send</button></form></section>
 </main>

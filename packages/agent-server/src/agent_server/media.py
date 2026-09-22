@@ -18,6 +18,11 @@ MEDIA_WORDS = ("audio", "music", "song", "sound", "story")
 
 _playlist_cache: dict[str, list[dict[str, Any]]] | None = None
 
+def invalidate_playlist_cache() -> None:
+    global _playlist_cache
+    _playlist_cache = None
+
+
 def _title_from_filename(stem: str) -> str:
     """Convert a filename stem like 'bedtime_music' or 'my-lullaby' to a title."""
     return stem.replace("_", " ").replace("-", " ").title()
@@ -81,7 +86,7 @@ def scan_playlist_catalog() -> dict[str, list[dict[str, Any]]]:
     playlists: dict[str, list[dict[str, Any]]] = {}
 
     for subdir in sorted(MEDIA_DIR.rglob("*")):
-        if not subdir.is_dir():
+        if not subdir.is_dir() or any(part.startswith(".") for part in subdir.relative_to(MEDIA_DIR).parts):
             continue
         # Skip the root media dir itself
         rel_path = subdir.relative_to(MEDIA_DIR)

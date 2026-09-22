@@ -12,11 +12,13 @@
   function view(kind) {
     el('journal-workspace').hidden = kind !== 'journal';
     el('graph-workspace').hidden = kind !== 'graph';
-    el('view-journal').setAttribute('aria-pressed', kind === 'journal');
-    el('view-graph').setAttribute('aria-pressed', kind === 'graph');
+    for (const item of ['journal', 'graph']) {
+      if (item === kind) el('view-' + item).setAttribute('aria-current', 'page');
+      else el('view-' + item).removeAttribute('aria-current');
+    }
   }
-  el('view-journal').onclick = () => view('journal');
-  el('view-graph').onclick = () => view('graph');
+  const viewFromHash = () => view(location.hash === '#graph' ? 'graph' : 'journal');
+  window.addEventListener('hashchange', viewFromHash);
   function lock(value) {
     busy = value;
     el('journal-workspace').querySelectorAll('button,textarea,select').forEach(e => e.disabled = value);
@@ -141,7 +143,7 @@
     const m=session.pending;
     send({text:m.text,request_id:m.request_id,selected_note_id:m.selected_note_id||null});
   };
-  view('journal');
+  viewFromHash();
   (async()=>{
     await notes();
     const all=await api('/api/logbook/sessions');

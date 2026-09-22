@@ -274,3 +274,62 @@ optional `selected_note_id`. Messages are limited to 8,000 characters and a
 conversation to 40,000 characters. A new conversation can access existing notes.
 Legacy `/api/journals` entry/organization endpoints remain compatible.
 See [Log book design](dev-docs/design/logbook.md).
+
+### Scheduled YouTube playlist imports
+
+Install the agent dependencies as usual, and install **FFmpeg/ffprobe** plus a
+supported **Deno** runtime on the server (see the
+[yt-dlp runtime prerequisites](https://github.com/yt-dlp/yt-dlp#dependencies)).
+The Python dependency includes yt-dlp and its default extras. Keep yt-dlp updated
+when YouTube extraction changes. Set `MEDIA_DIR` to the same local media directory
+used by Home Assistant. The service needs write access there.
+
+Use the **Media playlist sync** section of the server's `/docs` page, or:
+
+```bash
+curl -X POST http://localhost:8200/media/sync-jobs \
+  -H 'Content-Type: application/json' \
+  -d '{"url":"https://www.youtube.com/playlist?list=YOUR_PLAYLIST_ID","name":"Sample playlist","interval_hours":24}'
+```
+
+The first sync is queued immediately and begins within one minute when the worker
+is free. Each playlist gets a folder such as
+`Sample_playlist_PLAYLIST_ID/`, with title-and-video-ID MP3 filenames. Playback
+uses filename order. Sync is additive: it skips downloaded videos, retries failed
+ones, and keeps audio for videos removed from YouTube. Use public or unlisted
+playlists containing media you have permission to download.
+
+- `GET /media/sync-jobs`: persisted state, last/next run (Unix timestamps), count
+  imported on the last attempt, and error details.
+- `PUT /media/sync-jobs/{id}` with `{"interval_hours":12,"enabled":true}`:
+  change cadence or pause using `enabled:false`. Pausing lets an active run finish.
+- `POST /media/sync-jobs/{id}/sync`: queue an enabled job for another attempt.
+
+Jobs persist in `DB_DIR/playlist-sync.sqlite3` (`./data` by default). Restarting
+recovers interrupted jobs. Run one server process; the worker serializes downloads
+to limit load on the robot. Manage jobs only from the trusted household network,
+consistent with the server's existing administration APIs. Private playlists and
+account cookies are not supported.
+
+### Background jobs page
+
+Open `/jobs` (also linked from the household workspace) to manage both the daily
+knowledge quality improvement job and YouTube imports. Add playlists, edit the
+repeat interval in hours, pause/resume jobs, or queue a run. Saving an interval
+sets the next execution one interval from now; Run now explicitly queues work.
+The maintenance job initially starts at the next server-local midnight, then
+repeats every 24 hours unless changed. This is an elapsed-time interval, not a
+fixed wall-clock schedule across daylight-saving changes.
+
+Each job shows its next/last execution and retained history, including outcome,
+start/end times, duration, manual/scheduled trigger, summary, and per-run logs.
+The page refreshes every five seconds while preserving edits. History retains the
+newest 100 runs per job and the latest 500 bounded log entries per run. It starts
+with this feature; previous executions cannot be reconstructed. Settings and
+history share `DB_DIR/playlist-sync.sqlite3`; interrupted runs are marked on
+restart and their jobs requeued. All job types share one worker.
+
+The management API is `/api/jobs`, with `PUT /{id}` for interval/enabled settings,
+`POST /{id}/run` to queue work, `GET /{id}/runs?before=RUN_ID` for history, and
+`GET /{id}/runs/{run_id}` for logs. Existing playlist APIs remain available.
+The legacy `/maintenance/run` endpoint also records history and rejects overlap.

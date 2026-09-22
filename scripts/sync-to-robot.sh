@@ -30,6 +30,8 @@ EXCLUDES=(
     # These live on the robot and must survive an application-code sync.
     --exclude='data'
     --exclude='logs'
+    --exclude='media'
+    --exclude='.downloads'
     --exclude='classic_conversion_cycle3'
 )
 

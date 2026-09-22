@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv>=1.0",
     "aiosqlite>=0.20",
     "ontology",
+    "yt-dlp[default]>=2026.2.4",
 ]
 
 [project.optional-dependencies]

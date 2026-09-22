@@ -3,6 +3,8 @@
 ## Agent Server
 
 ### Implemented
+- [x] Background jobs UI — manage quality improvement and playlist cadence, pause/run controls, persistent execution history and logs
+- [x] Scheduled YouTube playlist audio imports — persistent cadence, one folder per playlist, incremental MP3 downloads and job status
 - [x] Reflective Log book — notes browser and ongoing reflective conversation with optional CRUD tools, validated verbatim quotes, preserved messages/revisions, ontology links, and family-only retrieval
 
 - [x] POST /conversation endpoint — accepts JSON with text, conversation_id, language, source, device_id, satellite_id, timestamp

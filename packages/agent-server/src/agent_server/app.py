@@ -10,7 +10,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, HTMLResponse
 
 from contextlib import asynccontextmanager
 
@@ -30,6 +30,7 @@ from .models import (
     PlaybackEvent,
 )
 from .router import MessageRouter
+from .playlist_sync import PlaylistSync, sync_router, jobs_router, MAINTENANCE_ID
 
 LOG_DIR = Path(os.environ.get("LOG_DIR", "./logs"))
 
@@ -60,6 +61,7 @@ maintenance_job = MaintenanceJob(knowledge_store)
 graph_review = GraphReviewService(knowledge_store, conversation_db, maintenance_job)
 journals = JournalService(knowledge_store)
 logbook_chat = LogbookChat(journals)
+playlist_sync = PlaylistSync(maintenance=maintenance_job)
 WEB_DIR = Path(__file__).parent / "web"
 
 
@@ -68,13 +70,18 @@ async def lifespan(app: FastAPI):
     await conversation_db.connect()
     knowledge_store.connect()
     knowledge_store.sync_media_catalog()
-    maintenance_job.start_scheduler()
-    yield
-    maintenance_job.stop()
-    await conversation_db.close()
+    playlist_sync.start()
+    try:
+        yield
+    finally:
+        await playlist_sync.stop()
+        await conversation_db.close()
 
 
 app = FastAPI(title="Kids Robot Agent Server", version="0.1.0", lifespan=lifespan)
+
+app.include_router(sync_router(playlist_sync))
+app.include_router(jobs_router(playlist_sync))
 
 
 @app.post("/conversation", response_model=ConversationResponse)
@@ -130,14 +137,32 @@ async def playback_event(session_id: str, event: PlaybackEvent) -> dict:
 @app.post("/maintenance/run")
 async def run_maintenance() -> dict:
     """Manually trigger the nightly maintenance job."""
-    result = await maintenance_job.run_now()
+    result = await playlist_sync.sync(playlist_sync.get(MAINTENANCE_ID), trigger="manual")
     return result
 
 
+def workspace_page(filename: str, active: str) -> HTMLResponse:
+    navigation = (WEB_DIR / "navigation.html").read_text().replace(
+        f'id="view-{active}"', f'id="view-{active}" aria-current="page"'
+    )
+    html = (WEB_DIR / filename).read_text().replace("<!-- workspace-navigation -->", navigation)
+    return HTMLResponse(html, headers={"Cache-Control": "no-store"})
+
+
+@app.get("/web/workspace.css", include_in_schema=False)
+async def workspace_styles() -> FileResponse:
+    return FileResponse(WEB_DIR / "workspace.css", media_type="text/css", headers={"Cache-Control": "no-store"})
+
+
+@app.get("/jobs", include_in_schema=False)
+async def jobs_page() -> HTMLResponse:
+    return workspace_page("jobs.html", "jobs")
+
+
 @app.get("/graph", include_in_schema=False)
-async def graph_page() -> FileResponse:
+async def graph_page() -> HTMLResponse:
     """Private visual explorer and parent-directed graph maintenance UI."""
-    return FileResponse(WEB_DIR / "graph.html", headers={"Cache-Control": "no-store"})
+    return workspace_page("graph.html", "journal")
 
 
 @app.get("/api/graph")
