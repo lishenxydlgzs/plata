@@ -67,14 +67,16 @@ to the HA integration. The script:
 1. Installs locked frontend dependencies, checks TypeScript, runs frontend tests,
    and produces static assets locally. The Pi does not need Node.
 2. Checks remote Python 3.11+ and creates a timestamped application-only archive
-   under `~/agent-server-releases/`, with the current Python package versions.
+   under `~/agent-server-releases/`, with the complete Python environment, package
+   versions, configuration, and verified private SQLite snapshots.
 3. Syncs source and built assets while excluding databases, environment files,
    media, logs and local dependencies; installs backend packages and restarts.
 4. Checks `/health`. Inspect `/`, `/workspace/`, `/jobs`, and one saved browser
    conversation after rollout. Exercise voice once within the Gemini quota.
 
-The release archive is an application rollback aid, not a private-data backup.
-Keep normal private database backups separately, outside this repository. Reverse
+The application archive excludes private data; separate SQLite snapshots and
+configuration copies stay in the protected release directory. Keep regular
+private backups as well, outside this repository. Reverse
 proxies must pass SSE without buffering; the backend sends
 `X-Accel-Buffering: no`. Keep the service on the existing trusted household network.
 Browser administration retains the previous server trust boundary.
@@ -82,7 +84,10 @@ Browser administration retains the previous server trust boundary.
 ## Application rollback
 
 If the new UI alone fails, use `/legacy/graph` and `/legacy/jobs` while diagnosing.
-For a full rollback, use the timestamp printed by deployment. On the robot:
+For a full rollback, run `./scripts/rollback.sh TIMESTAMP` from the build computer,
+using the timestamp printed by deployment. It restores code and dependencies
+while retaining current databases. The manual alternative below is for older
+archives without a saved environment. On the robot:
 
 ```bash
 cd ~/agent-server
@@ -162,3 +167,33 @@ diagnosis. Private database snapshots are disaster-recovery copies, not part of
 routine rollback; restore them only with the service stopped and after deciding
 how to retain data written since the snapshot. The earlier manual instructions
 are a fallback for release archives created before this support existed.
+
+## Production rollout — 2026-10-03
+
+Branch: `codex/react-strands-workspace`. Baseline rollback tag:
+`rollback/pre-react-strands-20261003` (commit `e4e2ccb`). Migration commit:
+`302ee91`; rollback safeguards: `44c2377`.
+
+The original production release, environment, configuration and three verified
+SQLite snapshots are retained privately on the robot under
+`~/agent-server-releases/20261003T230315Z`. To restore the pre-migration application:
+
+```bash
+./scripts/rollback.sh 20261003T230315Z
+```
+
+Agent-server-only deployment passed health, static route and entry-asset checks.
+Live Gemini checks on the robot used disposable databases and disabled workers:
+voice response (1.19 s), note creation plus idempotent replay (1.51 s), timer
+response (0.82 s), and graph correction retaining its original source (1.17 s).
+No timer or media action was executed on physical devices by these tests.
+
+The actual LAN browser also completed a separate, clearly labeled deployment
+connectivity conversation with a live streamed reply. Its persisted receipt was
+verified and it made no note mutations. Production database integrity checks
+passed; scheduled-job state/history remained visible in the deployed UI. The
+backend regression suite passed all 106 tests. Deployment builds run the five
+frontend tests, TypeScript check and Vite build. A low-severity transitive
+DOMPurify advisory found during rollout was fixed in the lockfile; npm audit
+reported zero remaining advisories. Physical microphone/STT/TTS testing still
+requires a person at the Voice PE. No HA integration files were changed.
