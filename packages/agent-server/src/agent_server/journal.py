@@ -7,7 +7,7 @@ from typing import Literal
 from uuid import uuid4
 
 from pydantic import BaseModel, Field, ConfigDict
-from .llm import generate_chat_json
+from .agent_runtime import generate_chat_json
 
 
 class NewJournal(BaseModel):

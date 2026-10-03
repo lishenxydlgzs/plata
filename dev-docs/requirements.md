@@ -81,3 +81,17 @@
 
 - [ ] Systemd service — auto-start agent server on Pi boot
 - [ ] Deploy hook — auto-copy HA integration on deploy --ha
+
+## React and Strands Migration
+
+### Implemented
+
+- [x] Polished responsive React workspace — accessible navigation and complete loading, empty, success, and error states
+- [x] CopilotKit conversations over AG-UI — real Strands streaming, server-owned history, safe retries, and persisted tool outcomes
+- [x] Logbook feature parity — note tools, verbatim quotes, revisions, visibility, selected-note context, and graph connections
+- [x] Knowledge review feature parity — graph visualization, filters, maintenance conversations, corrections, and action results
+- [x] Household management screens — people, guidance revisions, learning/behavior records, review updates, and memory settings
+- [x] Jobs feature parity — playlist imports, schedule/pause/run controls, history pagination, and execution logs
+- [x] Strands voice orchestration — Gemini configuration/fallback and unchanged Home Assistant, media, playlist, and timer contracts
+- [x] Migration verification — backend regressions, frontend checks/build, AG-UI integration tests, and desktop/mobile browser checks
+- [x] Self-hosted frontend deployment — asset build/sync, private data preservation, setup and rollback documentation

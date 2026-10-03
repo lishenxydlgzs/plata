@@ -14,11 +14,8 @@ import json
 import logging
 from typing import Any
 
-from google import genai
-from google.genai import types
-
 from .knowledge import KnowledgeStore
-from .llm import generate_content_with_fallback
+from .agent_runtime import generate_chat_json
 
 logger = logging.getLogger(__name__)
 
@@ -113,24 +110,10 @@ class MaintenanceJob:
 
     async def _call_llm(self, system_prompt: str) -> dict:
         """Call LLM with higher token limits for maintenance tasks."""
-        response = await generate_content_with_fallback(
-            contents=[
-                types.Content(
-                    role="user",
-                    parts=[types.Part.from_text(text="Inspect the knowledge graph and propose improvements.")],
-                )
-            ],
-            config=types.GenerateContentConfig(
-                system_instruction=system_prompt,
-                max_output_tokens=1000,
-                temperature=0,
-                response_mime_type="application/json",
-            ),
+        return await generate_chat_json(
+            system_prompt, [], 'Inspect the knowledge graph and propose improvements.',
+            max_output_tokens=1000, temperature=0,
         )
-        text = response.text
-        if not text:
-            return {"actions": [], "done": True}
-        return json.loads(text)
 
     def _build_snapshot(self) -> dict[str, Any]:
         """Build a text snapshot of the current ontology state for the LLM."""

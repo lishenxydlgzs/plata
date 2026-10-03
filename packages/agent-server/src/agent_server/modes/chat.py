@@ -5,7 +5,7 @@ import logging
 import re
 
 from ..knowledge import KnowledgeStore
-from ..llm import generate_chat_json
+from ..agent_runtime import generate_chat_json
 from ..media import (
     get_media_catalog,
     get_playlist_catalog,

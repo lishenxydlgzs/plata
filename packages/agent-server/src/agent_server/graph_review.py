@@ -24,7 +24,7 @@ class CorrectRecord(BaseModel):
 
 from .context import ConversationDB
 from .knowledge import KnowledgeStore
-from .llm import generate_chat_json
+from .agent_runtime import generate_chat_json
 from .maintenance import MaintenanceJob
 
 REVIEW_PROMPT = """\
@@ -173,7 +173,7 @@ class GraphReviewService:
             if entity.entity_type == "learning_event" and person.id != entity.properties.get("person_id"):
                 props["session_id"] = None
         # Update identity links and properties together; retain original source text.
-        with store._db:
+        with store.transaction():
             if person:
                 store._db.execute("DELETE FROM links WHERE from_entity=? AND relationship_type='involves'", (entity.id,))
                 store._db.execute(

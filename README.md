@@ -39,6 +39,7 @@ Voice PE (ESPHome)  ──audio──▶  Home Assistant (STT/TTS)
 | Package | Description |
 |---------|-------------|
 | `packages/agent-server/` | FastAPI conversation backend (Python 3.11+) |
+| `packages/web-ui/` | React/CopilotKit workspace with AG-UI streaming to Strands |
 | `packages/ha-integration/` | Home Assistant custom conversation agent component |
 | `scripts/` | Deployment and utility scripts |
 | `dev-docs/` | Requirements and design documents |
@@ -50,6 +51,7 @@ Voice PE (ESPHome)  ──audio──▶  Home Assistant (STT/TTS)
 - Raspberry Pi with Python 3.11+
 - Home Assistant instance with Voice PE configured
 - Gemini API key (free tier works)
+- Node.js 20.19+ or 22.12+ on the build computer (not required on the Pi)
 
 ### Setup
 
@@ -61,7 +63,7 @@ cd plata
 # Create virtualenv and install
 python3 -m venv .venv
 source .venv/bin/activate
-pip install -e "packages/agent-server[dev]"
+pip install -e packages/ontology -e "packages/agent-server[dev]"
 
 # Configure
 cp .env.example .env
@@ -72,8 +74,13 @@ cp .env.example .env
 
 ```bash
 source .venv/bin/activate
+./scripts/build-workspace.sh
 python -m agent_server  # starts on 0.0.0.0:8200
 ```
+
+Open `http://localhost:8200/` for the React household workspace. Conversations use
+CopilotKit and AG-UI with a self-hosted Strands backend and the existing Gemini
+configuration. See [workspace setup, verification and rollback](dev-docs/design/workspace-operations.md).
 
 ### Deploy to Pi
 
@@ -249,7 +256,7 @@ Private project.
 
 ## Reflective Log book
 
-Open `/graph` and select **Log book**. Browse past notes on the left and chat on
+Open `/workspace/#logbook`. Browse past notes on the left and chat on
 the right. Describe an experience, add a thought, ask a question, or ask Plata to
 update or remove a note. Plata chooses the title and organization through note
 tools and replies briefly. There are no title/content forms or separate save steps.

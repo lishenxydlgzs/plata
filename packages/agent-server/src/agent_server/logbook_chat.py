@@ -7,7 +7,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from .journal import OrganizedNote, _dict
-from .llm import generate_chat_json as _generate_chat_json
+from .agent_runtime import generate_chat_json as _generate_chat_json
 
 
 async def generate_chat_json(prompt, history, text):
@@ -146,39 +146,64 @@ class LogbookChat:
         snapshots[id] = note['updated_at']
         return {k: note[k] for k in ('id', 'title', 'visibility', 'archived', 'current')} | {'sources': sources}
 
-    async def send(self, id, request):
+    def prepare(self, id, request):
+        """Persist a user turn and build trusted context; caller holds the lock."""
         if not request.text.strip():
             raise ValueError('Write a message first.')
-        async with self.lock:
-            session = self.session(id)
-            existing = next((m for m in session['messages'] if m['role'] == 'user' and m['request_id'] == request.request_id), None)
-            if existing and (existing['text'] != request.text or existing.get('selected_note_id') != request.selected_note_id):
-                raise ValueError('That request ID already belongs to another message.')
-            if existing and any(m['role'] == 'assistant' and m['request_id'] == request.request_id for m in session['messages']):
-                return session
-            if session['pending'] and not existing:
-                raise ValueError('Retry the saved message before sending another.')
-            if not existing:
-                if sum(len(m['text']) for m in session['messages']) + len(request.text) > 40000:
-                    raise ValueError('Start a new conversation to continue; your notes remain available.')
-                if request.selected_note_id:
-                    self.journals._journal(request.selected_note_id)
-                with self.db:
-                    source_id = self.journals._insert('journal_message', 'User message', {
-                        'session_id': id, 'role': 'user', 'text': request.text,
-                        'request_id': request.request_id, 'selected_note_id': request.selected_note_id})
-                    self.journals._link('has_entry', id, source_id)
-                    self.db.execute('UPDATE entities SET name=?,updated_at=? WHERE id=?', (session['messages'][0]['text'][:70] if session['messages'] else request.text[:70], datetime.now(timezone.utc).isoformat(), id))
-                session = self.session(id)
-            else:
-                source_id = existing['id']
-            allowed = {m['id']: m['text'] for m in session['messages'] if m['role'] == 'user'}
-            snapshots = {}
-            directory = [{'id': r['id'], 'type': r['entity_type'], 'title': r['name']} for r in self.db.execute("SELECT * FROM entities WHERE entity_type IN ('person','topic','guidance_document') ORDER BY updated_at DESC LIMIT 200")]
-            payload = {'messages': [{'id': m['id'], 'role': m['role'], 'text': m['text']} for m in session['messages']],
-                       'notes': self.journals.list(), 'directory': directory, 'tool_results': []}
+        session = self.session(id)
+        existing = next((m for m in session['messages'] if m['role'] == 'user' and m['request_id'] == request.request_id), None)
+        if existing and (existing['text'] != request.text or existing.get('selected_note_id') != request.selected_note_id):
+            raise ValueError('That request ID already belongs to another message.')
+        if existing and any(m['role'] == 'assistant' and m['request_id'] == request.request_id for m in session['messages']):
+            return {"session": session, "complete": True}
+        if session['pending'] and not existing:
+            raise ValueError('Retry the saved message before sending another.')
+        if not existing:
+            if sum(len(m['text']) for m in session['messages']) + len(request.text) > 40000:
+                raise ValueError('Start a new conversation to continue; your notes remain available.')
             if request.selected_note_id:
-                payload['selected_note'] = self._read(request.selected_note_id, allowed, snapshots)
+                self.journals._journal(request.selected_note_id)
+            with self.db:
+                source_id = self.journals._insert('journal_message', 'User message', {
+                    'session_id': id, 'role': 'user', 'text': request.text,
+                    'request_id': request.request_id, 'selected_note_id': request.selected_note_id})
+                self.journals._link('has_entry', id, source_id)
+                self.db.execute('UPDATE entities SET name=?,updated_at=? WHERE id=?', (session['messages'][0]['text'][:70] if session['messages'] else request.text[:70], datetime.now(timezone.utc).isoformat(), id))
+            session = self.session(id)
+        else:
+            source_id = existing['id']
+        allowed = {m['id']: m['text'] for m in session['messages'] if m['role'] == 'user'}
+        snapshots = {}
+        directory = [{'id': r['id'], 'type': r['entity_type'], 'title': r['name']} for r in self.db.execute("SELECT * FROM entities WHERE entity_type IN ('person','topic','guidance_document') ORDER BY updated_at DESC LIMIT 200")]
+        payload = {'messages': [{'id': m['id'], 'role': m['role'], 'text': m['text']} for m in session['messages']],
+                   'notes': self.journals.list(), 'directory': directory, 'tool_results': []}
+        if request.selected_note_id:
+            payload['selected_note'] = self._read(request.selected_note_id, allowed, snapshots)
+        return {"session": session, "complete": False, "source_id": source_id,
+                "allowed": allowed, "snapshots": snapshots, "directory": directory,
+                "payload": payload}
+
+    def complete(self, id, request, prepared, reply, calls):
+        """Validate and commit all note changes with the reply in one transaction."""
+        if not reply.strip():
+            raise ValueError('A brief assistant reply is required.')
+        operations = self._validate(calls, prepared['allowed'], prepared['snapshots'],
+                                    prepared['directory'], request.text)
+        with self.db:
+            changes = self._apply(operations, prepared['source_id'])
+            message_id = self.journals._insert('journal_message', 'Plata reply', {
+                'session_id': id, 'role': 'assistant', 'text': reply,
+                'request_id': request.request_id, 'changes': changes})
+            self.journals._link('has_entry', id, message_id)
+        return self.session(id)
+
+    async def send(self, id, request):
+        async with self.lock:
+            prepared = self.prepare(id, request)
+            if prepared['complete']:
+                return prepared['session']
+            payload = prepared['payload']
+            allowed, snapshots = prepared['allowed'], prepared['snapshots']
             for _ in range(4):
                 result = ToolResponse.model_validate(await generate_chat_json(PROMPT, [], json.dumps(payload, ensure_ascii=False)))
                 reads = [c for c in result.tool_calls if c.name in ('read_note', 'list_notes')]
@@ -196,17 +221,7 @@ class LogbookChat:
                             output = self._read(call.arguments['note_id'], allowed, snapshots)
                         payload['tool_results'].append({'name': call.name, 'arguments': call.arguments, 'result': output})
                     continue
-                if not result.reply.strip():
-                    raise ValueError('A brief assistant reply is required.')
-                # Validate the whole batch before any tool writes; no partial notes.
-                operations = self._validate(result.tool_calls, allowed, snapshots, directory, request.text)
-                with self.db:
-                    changes = self._apply(operations, source_id)
-                    message_id = self.journals._insert('journal_message', 'Plata reply', {
-                        'session_id': id, 'role': 'assistant', 'text': result.reply,
-                        'request_id': request.request_id, 'changes': changes})
-                    self.journals._link('has_entry', id, message_id)
-                return self.session(id)
+                return self.complete(id, request, prepared, result.reply, result.tool_calls)
             raise ValueError('The assistant needed too many tool rounds. Retry your saved message.')
 
     def _validate(self, calls, allowed, snapshots, directory, user_text):

@@ -268,7 +268,7 @@ async def test_status(client: AsyncClient):
 
 
 async def test_graph_review_page_and_snapshot(client: AsyncClient):
-    page = await client.get("/graph")
+    page = await client.get("/legacy/graph")
     assert page.status_code == 200
     assert "Plata’s knowledge graph" in page.text
 

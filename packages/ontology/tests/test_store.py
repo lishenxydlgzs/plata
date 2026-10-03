@@ -218,3 +218,22 @@ def test_upsert_link_updates_existing(store: OntologyStore):
     assert link2.id == link1.id
     assert link2.properties["role"] == "lead"
     assert link2.properties["since"] == "2024"
+
+
+def test_transaction_rolls_back_composed_store_operations(store):
+    original = store.create_entity('person', 'Sample Person')
+    with pytest.raises(ValueError):
+        with store.transaction():
+            store.update_entity(original.id, name='Changed Name')
+            project = store.create_entity('project', 'Sample Project')
+            store.create_link('works_on', original.id, project.id)
+            with store.transaction():
+                store.set_setting('sample', 'value')
+            raise ValueError('Abort the complete batch')
+    assert store.get_entity(original.id).name == 'Sample Person'
+    assert store.query_entities(EntityFilter(entity_type='project')) == []
+    assert store.get_setting('sample') is None
+    assert store.get_entity_links(original.id) == []
+    with store.transaction():
+        store.update_entity(original.id, name='Saved Name')
+    assert store.get_entity(original.id).name == 'Saved Name'

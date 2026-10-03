@@ -184,9 +184,22 @@ def test_existing_playlist_database_migrates_without_losing_schedule(tmp_path):
 async def test_jobs_page_and_workspace_navigation():
     from agent_server.app import app
     async with AsyncClient(transport=ASGITransport(app=app), base_url='http://test') as client:
-        response = await client.get('/jobs')
+        response = await client.get('/legacy/jobs')
         assert response.status_code == 200
         assert response.headers['cache-control'] == 'no-store'
         assert 'Execution history' in response.text
         assert 'Execution logs' in response.text
-        assert 'href="/jobs"' in (await client.get('/graph')).text
+        assert 'href="/jobs"' in (await client.get('/legacy/graph')).text
+
+
+async def test_built_workspace_routes_and_source_only_fallback(monkeypatch, tmp_path):
+    import importlib
+    module = importlib.import_module('agent_server.app')
+    monkeypatch.setattr(module, 'UI_DIST', tmp_path)
+    async with AsyncClient(transport=ASGITransport(app=module.app), base_url='http://test') as client:
+        assert 'Execution history' in (await client.get('/jobs')).text
+        assert (await client.get('/')).headers['location'] == '/graph'
+        (tmp_path / 'index.html').write_text('<div id="root"></div>')
+        assert (await client.get('/')).headers['location'] == '/workspace/'
+        assert (await client.get('/graph')).headers['location'] == '/workspace/'
+        assert (await client.get('/jobs')).headers['location'] == '/workspace/#jobs'

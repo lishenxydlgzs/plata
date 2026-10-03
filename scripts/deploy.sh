@@ -27,6 +27,26 @@ if [[ "${1:-}" == "--ha" ]]; then
     UPDATE_HA=true
 fi
 
+echo "=== Building browser workspace ==="
+"$SCRIPT_DIR/build-workspace.sh"
+
+echo "=== Saving previous application release ==="
+ssh "$REMOTE" bash -s <<'BACKUP'
+set -euo pipefail
+release_dir="$HOME/agent-server-releases/$(date -u +%Y%m%dT%H%M%SZ)"
+mkdir -p "$release_dir"
+cd "$HOME/agent-server"
+.venv/bin/python -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ is required"'
+tar --exclude='./.venv' --exclude='./.git' --exclude='./.env*' \
+    --exclude='./data' --exclude='./logs' --exclude='./media' \
+    --exclude='./.downloads' --exclude='./classic_conversion_cycle3' \
+    --exclude='node_modules' --exclude='__pycache__' \
+    --exclude='*.db' --exclude='*.db-*' --exclude='*.sqlite3*' \
+    -czf "$release_dir/application.tar.gz" .
+.venv/bin/pip freeze > "$release_dir/python-packages.txt"
+echo "Rollback release saved: $release_dir"
+BACKUP
+
 echo "=== Syncing workspace ==="
 "$SCRIPT_DIR/sync-to-robot.sh"
 

@@ -19,3 +19,9 @@ data/
 logs/
 media/
 classic_conversion_cycle3/
+
+# Operational databases and frontend compiler state
+*.db
+*.db-*
+*.sqlite3*
+*.tsbuildinfo

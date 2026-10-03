@@ -10,12 +10,15 @@ from dotenv import load_dotenv
 load_dotenv()
 
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 
 from contextlib import asynccontextmanager
 
 from .journal import JournalService, NewJournal, JournalPatch, EntryRequest
 from .logbook_chat import LogbookChat, ChatRequest
+from .agent_stream import browser_agent_router
+from .graph_agent import GraphBrowserReview
 from .household import GuidanceRequest, PersonRequest, MemorySettings, BehaviorReview
 from .context import ConversationDB
 from .knowledge import KnowledgeStore
@@ -59,10 +62,12 @@ knowledge_store = KnowledgeStore()
 message_router = MessageRouter(conversation_db, knowledge_store)
 maintenance_job = MaintenanceJob(knowledge_store)
 graph_review = GraphReviewService(knowledge_store, conversation_db, maintenance_job)
+graph_browser = GraphBrowserReview(graph_review)
 journals = JournalService(knowledge_store)
 logbook_chat = LogbookChat(journals)
 playlist_sync = PlaylistSync(maintenance=maintenance_job)
 WEB_DIR = Path(__file__).parent / "web"
+UI_DIST = Path(os.environ.get("UI_DIST", str(Path(__file__).resolve().parents[3] / "web-ui" / "dist")))
 
 
 @asynccontextmanager
@@ -82,6 +87,10 @@ app = FastAPI(title="Kids Robot Agent Server", version="0.1.0", lifespan=lifespa
 
 app.include_router(sync_router(playlist_sync))
 app.include_router(jobs_router(playlist_sync))
+app.include_router(browser_agent_router(logbook_chat))
+app.include_router(browser_agent_router(graph_browser, "graph"))
+if UI_DIST.is_dir():
+    app.mount("/workspace", StaticFiles(directory=UI_DIST, html=True), name="workspace")
 
 
 @app.post("/conversation", response_model=ConversationResponse)
@@ -155,14 +164,33 @@ async def workspace_styles() -> FileResponse:
 
 
 @app.get("/jobs", include_in_schema=False)
-async def jobs_page() -> HTMLResponse:
+async def jobs_page():
+    if (UI_DIST / "index.html").is_file():
+        return RedirectResponse("/workspace/#jobs", status_code=307)
     return workspace_page("jobs.html", "jobs")
 
 
 @app.get("/graph", include_in_schema=False)
-async def graph_page() -> HTMLResponse:
+async def graph_page():
     """Private visual explorer and parent-directed graph maintenance UI."""
+    if (UI_DIST / "index.html").is_file():
+        return RedirectResponse("/workspace/", status_code=307)
     return workspace_page("graph.html", "journal")
+
+
+@app.get("/", include_in_schema=False)
+async def workspace_home():
+    return RedirectResponse("/workspace/" if (UI_DIST / "index.html").is_file() else "/graph")
+
+
+@app.get("/legacy/graph", include_in_schema=False)
+async def legacy_graph_page() -> HTMLResponse:
+    return workspace_page("graph.html", "journal")
+
+
+@app.get("/legacy/jobs", include_in_schema=False)
+async def legacy_jobs_page() -> HTMLResponse:
+    return workspace_page("jobs.html", "jobs")
 
 
 @app.get("/api/graph")
@@ -250,15 +278,15 @@ async def create_graph_review_session(body: dict | None = None) -> dict:
 
 @app.get("/api/graph/review-sessions")
 async def list_graph_review_sessions() -> list[dict]:
-    return await conversation_db.list_graph_review_sessions()
+    return await graph_browser.sessions()
 
 
 @app.get("/api/graph/review-sessions/{session_id}")
 async def get_graph_review_session(session_id: str) -> dict:
-    session = await conversation_db.get_graph_review_session(session_id)
-    if not session:
+    try:
+        return await graph_browser.session(session_id)
+    except KeyError:
         raise HTTPException(status_code=404, detail="Review session not found")
-    return session
 
 
 @app.post("/api/graph/review-sessions/{session_id}/messages")

@@ -6,6 +6,7 @@ import json
 import sqlite3
 import uuid
 from collections import deque
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any, Protocol
 
@@ -41,6 +42,31 @@ class OntologyStore:
         self._db = db
         self._db.row_factory = sqlite3.Row
         self._types = types
+        self._transaction_depth = 0
+
+    def _commit(self):
+        if not self._transaction_depth:
+            self._db.commit()
+
+    @contextmanager
+    def transaction(self):
+        """Atomically compose synchronous store operations using nested savepoints.
+
+        Do not await while this context is open: the connection is shared.
+        """
+        name = f"ontology_batch_{self._transaction_depth}"
+        self._db.execute(f"SAVEPOINT {name}")
+        self._transaction_depth += 1
+        try:
+            yield
+        except BaseException:
+            self._db.execute(f"ROLLBACK TO {name}")
+            self._db.execute(f"RELEASE {name}")
+            raise
+        else:
+            self._db.execute(f"RELEASE {name}")
+        finally:
+            self._transaction_depth -= 1
 
     def get_all_entity_types(self) -> list[EntityType]:
         return self._types.get_entity_types()
@@ -72,7 +98,7 @@ class OntologyStore:
             "INSERT INTO entities (id, entity_type, name, properties, summary, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (id, entity_type, name, json.dumps(props), final_summary, ts, ts),
         )
-        self._db.commit()
+        self._commit()
         return Entity(id=id, entity_type=entity_type, name=name, properties=props, summary=final_summary, created_at=ts, updated_at=ts)
 
     def get_entity(self, id: str) -> Entity | None:
@@ -122,7 +148,7 @@ class OntologyStore:
         values.append(now)
         values.append(id)
         self._db.execute(f"UPDATE entities SET {', '.join(fields)} WHERE id = ?", values)
-        self._db.commit()
+        self._commit()
         return True
 
     def backdate_created_at(self, id: str, created_at: str) -> None:
@@ -130,7 +156,7 @@ class OntologyStore:
             "UPDATE entities SET created_at = ? WHERE id = ? AND created_at > ?",
             (created_at, id, created_at),
         )
-        self._db.commit()
+        self._commit()
 
     def search_entities(self, query: str, limit: int = 50) -> list[Entity]:
         try:
@@ -198,7 +224,7 @@ class OntologyStore:
 
     def delete_entity(self, id: str) -> bool:
         cursor = self._db.execute("DELETE FROM entities WHERE id = ?", (id,))
-        self._db.commit()
+        self._commit()
         return cursor.rowcount > 0
 
     # ─── Links ────────────────────────────────────────────────────────────────
@@ -218,7 +244,7 @@ class OntologyStore:
         )
         self._db.execute("UPDATE entities SET updated_at = ? WHERE id = ?", (now, from_entity))
         self._db.execute("UPDATE entities SET updated_at = ? WHERE id = ?", (now, to_entity))
-        self._db.commit()
+        self._commit()
         return Link(id=id, relationship_type=relationship_type, from_entity=from_entity, to_entity=to_entity, properties=properties, created_at=now)
 
     def upsert_link(
@@ -247,7 +273,7 @@ class OntologyStore:
             )
             self._db.execute("UPDATE entities SET updated_at = ? WHERE id = ?", (now, from_entity))
             self._db.execute("UPDATE entities SET updated_at = ? WHERE id = ?", (now, to_entity))
-            self._db.commit()
+            self._commit()
             return Link(id=existing.id, relationship_type=relationship_type, from_entity=from_entity, to_entity=to_entity, properties=merged_props, created_at=existing.created_at), False
         else:
             link = self.create_link(relationship_type, from_entity, to_entity, properties)
@@ -301,7 +327,7 @@ class OntologyStore:
 
     def delete_link(self, id: str) -> bool:
         cursor = self._db.execute("DELETE FROM links WHERE id = ?", (id,))
-        self._db.commit()
+        self._commit()
         return cursor.rowcount > 0
 
     # ─── Graph Traversal ──────────────────────────────────────────────────────
@@ -358,7 +384,7 @@ class OntologyStore:
             "INSERT INTO ontology_settings (key, value, updated_at) VALUES (?, ?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
             (key, value, now),
         )
-        self._db.commit()
+        self._commit()
 
     # ─── Identifiers ──────────────────────────────────────────────────────────
 
@@ -368,14 +394,14 @@ class OntologyStore:
             "INSERT OR REPLACE INTO entity_identifiers (entity_id, system, external_id, created_at) VALUES (?, ?, ?, ?)",
             (entity_id, system, external_id, now),
         )
-        self._db.commit()
+        self._commit()
 
     def remove_identifier(self, entity_id: str, system: str) -> bool:
         cursor = self._db.execute(
             "DELETE FROM entity_identifiers WHERE entity_id = ? AND system = ?",
             (entity_id, system),
         )
-        self._db.commit()
+        self._commit()
         return cursor.rowcount > 0
 
     def get_identifiers(self, entity_id: str) -> list[EntityIdentifier]:
@@ -430,7 +456,7 @@ class OntologyStore:
             self._db.execute("DELETE FROM entities_fts")
         except sqlite3.OperationalError:
             pass
-        self._db.commit()
+        self._commit()
 
     # ─── Private ──────────────────────────────────────────────────────────────
 
