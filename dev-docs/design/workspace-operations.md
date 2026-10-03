@@ -140,3 +140,25 @@ against the production robot during development.
   matching the existing API.
 - Local tests do not establish real-provider latency or Pi performance. A bounded
   live Gemini/HA smoke check remains part of the separately authorized rollout.
+
+## Automated rollback support (2026-10-03)
+
+Deployment now saves the complete `.venv`, configuration, and verified SQLite
+backup snapshots in the private robot release directory (mode 0700), alongside
+the application archive. Database snapshots use SQLite's online backup API and
+integrity checks. They remain on the robot and are never synced into Git.
+
+Failures during sync, dependency installation or the startup health check trigger
+application/environment rollback automatically. To request the same rollback:
+
+```bash
+./scripts/rollback.sh YYYYMMDDTHHMMSSZ
+```
+
+Use the timestamp printed by deployment. This restores the previous code and
+Python environment without downloading dependencies and **retains current
+operational databases**. The failed environment is retained with the release for
+diagnosis. Private database snapshots are disaster-recovery copies, not part of
+routine rollback; restore them only with the service stopped and after deciding
+how to retain data written since the snapshot. The earlier manual instructions
+are a fallback for release archives created before this support existed.

@@ -31,9 +31,11 @@ echo "=== Building browser workspace ==="
 "$SCRIPT_DIR/build-workspace.sh"
 
 echo "=== Saving previous application release ==="
-ssh "$REMOTE" bash -s <<'BACKUP'
+RELEASE_ID="$(date -u +%Y%m%dT%H%M%SZ)"
+ssh "$REMOTE" bash -s -- "$RELEASE_ID" <<'BACKUP'
 set -euo pipefail
-release_dir="$HOME/agent-server-releases/$(date -u +%Y%m%dT%H%M%SZ)"
+umask 077
+release_dir="$HOME/agent-server-releases/$1"
 mkdir -p "$release_dir"
 cd "$HOME/agent-server"
 .venv/bin/python -c 'import sys; assert sys.version_info >= (3, 11), "Python 3.11+ is required"'
@@ -44,8 +46,39 @@ tar --exclude='./.venv' --exclude='./.git' --exclude='./.env*' \
     --exclude='*.db' --exclude='*.db-*' --exclude='*.sqlite3*' \
     -czf "$release_dir/application.tar.gz" .
 .venv/bin/pip freeze > "$release_dir/python-packages.txt"
+tar -czf "$release_dir/venv.tar.gz" .venv
+if [ -f .env ]; then cp .env "$release_dir/environment.env"; fi
+.venv/bin/python - "$release_dir" <<'PYBACKUP'
+import os, sqlite3, sys
+from pathlib import Path
+from dotenv import load_dotenv
+load_dotenv(Path.cwd() / '.env')
+source = Path(os.getenv('DB_DIR', './data'))
+target = Path(sys.argv[1]) / 'databases'
+target.mkdir(mode=0o700)
+count = 0
+for path in source.iterdir():
+    if path.suffix not in {'.db', '.sqlite3'} or not path.is_file():
+        continue
+    with sqlite3.connect(f'file:{path.resolve()}?mode=ro', uri=True) as original:
+        with sqlite3.connect(target / path.name) as backup:
+            original.backup(backup)
+            assert backup.execute('PRAGMA integrity_check').fetchone()[0] == 'ok'
+    count += 1
+print(f'Private SQLite snapshots verified: {count}')
+PYBACKUP
+tar -tzf "$release_dir/application.tar.gz" >/dev/null
+tar -tzf "$release_dir/venv.tar.gz" >/dev/null
 echo "Rollback release saved: $release_dir"
 BACKUP
+
+rollback_on_failure() {
+    trap - ERR
+    echo "Deployment failed. Restoring release $RELEASE_ID."
+    "$SCRIPT_DIR/rollback.sh" "$RELEASE_ID" || echo "Automatic rollback failed; run scripts/rollback.sh $RELEASE_ID manually."
+    exit 1
+}
+trap rollback_on_failure ERR
 
 echo "=== Syncing workspace ==="
 "$SCRIPT_DIR/sync-to-robot.sh"
@@ -55,7 +88,8 @@ ssh "$REMOTE" bash -s <<INSTALL
 set -euo pipefail
 cd $REMOTE_AGENT
 source .venv/bin/activate
-pip install -e packages/ontology -e packages/agent-server --quiet 2>&1 | tail -3
+pip install -e packages/ontology -e packages/agent-server --quiet
+pip check
 INSTALL
 
 echo "=== Restarting agent server ==="
@@ -77,6 +111,8 @@ done
 echo "Agent server: FAILED to start — check $REMOTE_HOME/logs/agent-server/agent-server.log"
 exit 1
 RESTART
+
+trap - ERR
 
 if [ "$UPDATE_HA" = true ]; then
     echo "=== Updating HA integration ==="
