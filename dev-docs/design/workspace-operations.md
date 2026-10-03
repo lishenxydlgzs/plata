@@ -72,7 +72,9 @@ to the HA integration. The script:
 3. Syncs source and built assets while excluding databases, environment files,
    media, logs and local dependencies; installs backend packages and restarts.
 4. Checks `/health`. Inspect `/`, `/workspace/`, `/jobs`, and one saved browser
-   conversation after rollout. Exercise voice once within the Gemini quota.
+   conversation after rollout. Follow the [HA voice testing guide](../testing/home-assistant-voice.md)
+   to test the actual HA integration and, when needed, STT/TTS and satellite playback
+   within the Gemini quota. Record the test boundary and any untested device path.
 
 The application archive excludes private data; separate SQLite snapshots and
 configuration copies stay in the protected release directory. Keep regular
@@ -195,5 +197,7 @@ passed; scheduled-job state/history remained visible in the deployed UI. The
 backend regression suite passed all 106 tests. Deployment builds run the five
 frontend tests, TypeScript check and Vite build. A low-severity transitive
 DOMPurify advisory found during rollout was fixed in the lockfile; npm audit
-reported zero remaining advisories. Physical microphone/STT/TTS testing still
-requires a person at the Voice PE. No HA integration files were changed.
+reported zero remaining advisories. The HA conversation, STT/TTS pipeline and satellite interfaces were not exercised
+during this rollout; they can be tested remotely using the
+[HA voice testing guide](../testing/home-assistant-voice.md). Physical microphone,
+on-device wake word and audible speaker quality still require an acoustic test. No HA integration files were changed.

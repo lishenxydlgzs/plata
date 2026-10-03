@@ -47,6 +47,15 @@ LOG_DIR=/tmp/agent-server-logs DB_DIR=/tmp/agent-server-data \
 
 The `LOG_DIR` and `DB_DIR` overrides are needed because the defaults point to Pi paths that don't exist locally.
 
+## Testing through Home Assistant
+
+Use the [HA voice testing guide](dev-docs/testing/home-assistant-voice.md) for
+remote integration checks: inject text through HA's conversation API, stream
+recorded audio through the Assist pipeline, and exercise supported satellite
+announcement/playback actions. These cover more than direct `/conversation`
+requests to Plata. Physical microphone, on-device wake word and audible speaker
+quality still need a device test. Record the boundary actually tested.
+
 ## Deployment
 
 ```bash

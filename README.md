@@ -236,6 +236,9 @@ User speaks → Voice PE → HA STT (Faster Whisper) → Kids Robot conversation
 
 The integration forwards the transcribed text along with a conversation ID to the agent server and returns the reply text for TTS synthesis.
 
+See [Testing Plata through Home Assistant](dev-docs/testing/home-assistant-voice.md)
+for remote text, recorded-audio pipeline, and satellite playback tests.
+
 ## Adding media files
 
 Plata can play audio files on command. Drop files into the media directory on the Pi:
