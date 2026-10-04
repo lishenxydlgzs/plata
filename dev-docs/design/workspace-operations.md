@@ -201,3 +201,11 @@ reported zero remaining advisories. The HA conversation, STT/TTS pipeline and sa
 during this rollout; they can be tested remotely using the
 [HA voice testing guide](../testing/home-assistant-voice.md). Physical microphone,
 on-device wake word and audible speaker quality still require an acoustic test. No HA integration files were changed.
+
+## Deployment preflight: production source drift
+
+Before the next full deployment, resolve
+[the production checkout mismatch](../issues/production-checkout-drift.md).
+The 2026-10-04 branding update preserved newer production playlist features by
+rebuilding from the production frontend and applying a scoped branding patch.
+Do not assume this branch contains every feature currently running on the robot.
