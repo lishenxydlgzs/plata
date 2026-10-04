@@ -12,3 +12,7 @@
 @media(max-width:1150px){.knowledge-grid{grid-template-columns:minmax(300px,1.2fr) minmax(285px,1fr);gap:16px}.split-grid{grid-template-columns:minmax(205px,.8fr) minmax(300px,1.5fr);gap:18px}.graph-filters{flex-direction:column}.graph-filters select{max-width:none}.entity-row{grid-template-columns:1fr auto}.entity-row strong,.entity-row small{grid-column:1}.entity-row>svg{grid-column:2}.entity-row>.badge{justify-self:start}.form-card{padding:20px}}
 @media(max-width:760px){.sidebar nav{overflow:auto}.sidebar nav a{white-space:nowrap;flex-shrink:0}.split-grid,.knowledge-grid{display:flex;flex-direction:column;gap:18px}.split-grid>*,.knowledge-grid>*{width:100%}.knowledge-grid>.conversation-card{position:static}.form-grid{grid-template-columns:1fr}.section-tabs{gap:2px}.section-tabs button{padding:9px 7px;font-size:11px}.section-tabs svg{width:14px}.graph-canvas svg{min-height:230px}.row-between{flex-wrap:wrap}.card-heading{flex-wrap:wrap}.form-card .check-label{align-self:flex-start}.knowledge-grid .conversation-card{min-height:450px}}
 @media(max-width:760px){.sidebar nav{display:grid;grid-template-columns:1fr 1fr;overflow:visible}.sidebar nav a{white-space:normal;min-height:42px}}
+
+/* Shared README brand asset; preserve its transparent background and proportions. */
+.brand-mark{display:block;width:56px;height:56px;flex-shrink:0;object-fit:contain;background:transparent;border:0;border-radius:0}
+@media(max-width:760px){.brand-mark{width:48px;height:48px}}
