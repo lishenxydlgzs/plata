@@ -88,6 +88,8 @@
 
 ### Implemented
 
+- [x] Shared Plata branding — README icon in workspace and favicon, with play-first philosophy
+
 - [x] Polished responsive React workspace — accessible navigation and complete loading, empty, success, and error states
 - [x] CopilotKit conversations over AG-UI — real Strands streaming, server-owned history, safe retries, and persisted tool outcomes
 - [x] Logbook feature parity — note tools, verbatim quotes, revisions, visibility, selected-note context, and graph connections
