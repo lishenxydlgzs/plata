@@ -1,5 +1,20 @@
 # Kids Robot Conversation Agent
 
+## Agent architecture principle
+
+Build tools and code as mechanisms the agent uses to achieve the user's intent.
+The agent owns interpreting requests, choosing and sequencing actions, invoking
+the available capabilities, and explaining the outcome in context.
+
+- Express behavioral guidance and defaults in agent instructions, leaving room
+  for conversational context, exceptions, and clarification.
+- Keep code responsible for concrete capabilities, input validation, authorization,
+  reliable execution, and durable state. Return results the agent can reason about.
+- Avoid keyword routing, domain-specific intent inference, automatic action
+  substitution, or scripted replies that override the agent's interpretation.
+- Test tool contracts and state transitions separately from agent interpretation;
+  verify the executor follows the agent's validated choices.
+
 ## Project structure
 
 Monorepo with packages in `packages/`:

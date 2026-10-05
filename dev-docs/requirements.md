@@ -3,6 +3,8 @@
 ## Agent Server
 
 ### Implemented
+- [x] Agent-classified song metadata — cached batched LLM tags/topics/entities, graph associations, reviewable uncertainty, and retry without redownloading
+- [x] Curated CC playlist imports — classify titles by subject/cycle/week, review metadata in Jobs, and replace the legacy catalog while retaining backup audio
 - [x] Background jobs UI — manage quality improvement and playlist cadence, pause/run controls, persistent execution history and logs
 - [x] Scheduled YouTube playlist audio imports — persistent cadence, one folder per playlist, incremental MP3 downloads and job status
 - [x] Reflective Log book — notes browser and ongoing reflective conversation with optional CRUD tools, validated verbatim quotes, preserved messages/revisions, ontology links, and family-only retrieval
@@ -26,7 +28,7 @@
 - [x] Long-term memory — system prompt includes known facts and recency-weighted topics across all sessions
 - [x] Knowledge graph review UI — visualize graph and persist parent-directed maintenance chats
 - [x] Graph record corrections — review messages and household events, preserve correction provenance, and show retryable server errors
-- [x] Resumable playlist playback — persist per-playlist progress and resume interrupted CC weeks
+- [x] Resumable playlist playback — LLM interprets playback requests and selects resume/next-week/restart actions using persisted song progress
 - [x] Household guidance documents — preserve Markdown and immutable content revisions, with application instructions separate from content
 - [x] Behavior event logging — record reports and model interpretations separately, link guidance revisions, and append repair/review updates
 - [x] Learning memory — record session starts and reported practice/recall/mastery, linked to stable people and topics

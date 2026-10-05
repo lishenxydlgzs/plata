@@ -53,7 +53,7 @@ To add a playable file, just copy the audio into the HA media directory with a d
 
 ## Backend Behavior
 
-The agent server handles stop commands deterministically. For play requests, it sends the user text and media catalog to the LLM, which returns `media_ids` (a list of catalog IDs to play).
+All playback requests, including stopping and negations, go to the LLM with the media catalog and saved progress. The model returns concrete `media_ids`, a `media_operation`, optional explicit `reset_playlist_ids`, and its spoken reply. The backend validates and executes these selections without choosing a different playlist or rewriting the reply.
 
 To keep the system prompt concise, the complete CC Cycle 3 playlist set is represented
 as the pattern `cc_cycle3_week_${weekN}`, where `${weekN}` is 1 through 24, rather

@@ -119,3 +119,90 @@ def test_starting_same_week_supersedes_older_attempt(
     # A late callback from the cancelled attempt cannot make it resumable again.
     state = playback_store.update_playback(first["session_id"], "interrupted")
     assert state["status"] == "superseded"
+
+
+def test_replacing_week_tracks_does_not_resume_legacy_cursor(playback_store, monkeypatch):
+    started = playback_store.begin_playback('cc_cycle3_week_3', 3, 'play')
+    playback_store.update_playback(started['session_id'], 'track_completed', 0)
+    playback_store.update_playback(started['session_id'], 'stopped')
+    catalog = {'cc_cycle3_week_3': [
+        {'file': 'curated/sample.mp3', 'title': 'Sample replacement', 'media_content_type': 'music'},
+    ]}
+    monkeypatch.setattr(knowledge, 'scan_playlist_catalog', lambda: catalog)
+    assert '0 of 1 completed; remaining: 1' in playback_store.build_playback_prompt()
+    playback_store.sync_media_catalog()
+    resumed = playback_store.begin_playback('cc_cycle3_week_3', 1, 'resume')
+    assert resumed['start_index'] == 0
+    assert resumed['session_id'] != started['session_id']
+    assert playback_store.store.get_entity(started['session_id']).properties['status'] == 'superseded'
+
+
+def test_completed_week_is_context_not_an_automatic_advance(playback_store):
+    first = playback_store.begin_playback('cc_cycle3_week_3', 3)
+    playback_store.update_playback(first['session_id'], 'track_completed', 2)
+    prompt = playback_store.build_playback_prompt()
+    assert 'cc_cycle3_week_3: 3 of 3 completed; remaining: 0' in prompt
+    assert 'status: completed' in prompt
+    assert 'advance' not in prompt
+    # The executor may only resume the exact playlist selected by the model.
+    resumed = playback_store.begin_playback('cc_cycle3_week_3', 3, 'resume')
+    assert resumed == {'session_id': first['session_id'], 'start_index': 3}
+    assert playback_store.store.get_entity(first['session_id']).properties['status'] == 'completed'
+
+
+def test_agent_reset_scope_is_exact_and_validated_before_mutation(playback_store):
+    first = playback_store.begin_playback('cc_cycle3_week_3', 3)
+    playback_store.update_playback(first['session_id'], 'track_completed', 2)
+    other = playback_store.begin_playback('cc_cycle3_week_5', 2)
+    with pytest.raises(ValueError):
+        playback_store.reset_playback(['cc_cycle3_week_3', 'missing'])
+    assert playback_store.store.get_entity(first['session_id']).properties['status'] == 'completed'
+    playback_store.reset_playback(['cc_cycle3_week_3'])
+    assert playback_store.store.get_entity(first['session_id']).properties['status'] == 'superseded'
+    assert playback_store.store.get_entity(other['session_id']).properties['status'] == 'playing'
+
+
+def test_resume_preserves_completed_songs_when_new_song_sorts_before_them(playback_store):
+    store = playback_store
+    first = store.begin_playback('cc_cycle3_week_3', 3)
+    store.update_playback(first['session_id'], 'track_completed', 0)
+    store.update_playback(first['session_id'], 'stopped')
+    (media.MEDIA_DIR / 'cc_cycle3/week_3/00_New.mp3').write_bytes(b'audio')
+    media.invalidate_playlist_cache()
+    store.sync_media_catalog()
+    resumed = store.begin_playback('cc_cycle3_week_3', 4, 'resume')
+    assert resumed == {'session_id': first['session_id'], 'start_index': 1}
+    files = store.store.get_entity(first['session_id']).properties['track_files']
+    assert files == ['cc_cycle3/week_3/01_Bible.mp3', 'cc_cycle3/week_3/00_New.mp3',
+                     'cc_cycle3/week_3/02_History.mp3', 'cc_cycle3/week_3/03_Science.mp3']
+
+
+def test_completed_week_with_new_song_resumes_new_song_before_advancing(playback_store):
+    first = playback_store.begin_playback('cc_cycle3_week_3', 3)
+    playback_store.update_playback(first['session_id'], 'track_completed', 2)
+    (media.MEDIA_DIR / 'cc_cycle3/week_3/00_New.mp3').write_bytes(b'audio')
+    media.invalidate_playlist_cache()
+    assert 'remaining: 1' in playback_store.build_playback_prompt()
+    resumed = playback_store.begin_playback('cc_cycle3_week_3', 4, 'resume')
+    assert resumed['start_index'] == 3
+    assert playback_store.store.get_entity(first['session_id']).properties['track_files'][3].endswith('00_New.mp3')
+
+
+def test_cc_resume_survives_server_restart(playback_store):
+    first = playback_store.begin_playback('cc_cycle3_week_3', 3)
+    playback_store.update_playback(first['session_id'], 'track_completed', 0)
+    playback_store.update_playback(first['session_id'], 'interrupted')
+    restarted = KnowledgeStore()
+    restarted.connect()
+    assert 'cc_cycle3_week_3: 1 of 3 completed; remaining: 2' in restarted.build_playback_prompt()
+    assert restarted.begin_playback('cc_cycle3_week_3', 3, 'resume')['start_index'] == 1
+    restarted.store._db.close()
+
+
+def test_progress_context_includes_latest_state_per_playlist(playback_store):
+    first = playback_store.begin_playback('cc_cycle3_week_3', 3)
+    playback_store.update_playback(first['session_id'], 'track_completed', 2)
+    playback_store.begin_playback('cc_cycle3_week_3', 3, 'restart')
+    prompt = playback_store.build_playback_prompt()
+    assert prompt.count('cc_cycle3_week_3:') == 1
+    assert '0 of 3 completed; remaining: 3' in prompt

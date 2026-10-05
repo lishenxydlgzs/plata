@@ -4,7 +4,6 @@ import logging
 
 from .context import ConversationDB
 from .knowledge import KnowledgeStore
-from .media import is_stop_request, media_stop_response
 from .models import ConversationRequest, ConversationResponse
 from .modes.chat import ChatHandler
 
@@ -18,11 +17,7 @@ class MessageRouter:
         self._handler = ChatHandler(knowledge)
 
     async def route(self, request: ConversationRequest) -> ConversationResponse:
-        if is_stop_request(request.text):
-            self._knowledge.stop_active_playback()
-            response = media_stop_response()
-        else:
-            history = await self._db.get_history(request.conversation_id)
-            response = await self._handler.handle(request, history)
+        history = await self._db.get_history(request.conversation_id)
+        response = await self._handler.handle(request, history)
         await self._db.save_turn(request.conversation_id, request.text, response.reply_text)
         return response

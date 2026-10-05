@@ -65,7 +65,7 @@ graph_review = GraphReviewService(knowledge_store, conversation_db, maintenance_
 graph_browser = GraphBrowserReview(graph_review)
 journals = JournalService(knowledge_store)
 logbook_chat = LogbookChat(journals)
-playlist_sync = PlaylistSync(maintenance=maintenance_job)
+playlist_sync = PlaylistSync(maintenance=maintenance_job, on_catalog_changed=knowledge_store.sync_media_catalog)
 WEB_DIR = Path(__file__).parent / "web"
 UI_DIST = Path(os.environ.get("UI_DIST", str(Path(__file__).resolve().parents[3] / "web-ui" / "dist")))
 

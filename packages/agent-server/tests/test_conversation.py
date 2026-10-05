@@ -97,7 +97,14 @@ async def test_conversation_returns_media_play_action(
     ]
 
 
-async def test_conversation_returns_media_stop_action(client: AsyncClient):
+async def test_conversation_returns_media_stop_action(client: AsyncClient, monkeypatch):
+    from agent_server.modes import chat
+
+    async def generate(system_prompt, history, user_text):
+        assert 'Interpret negations' in system_prompt
+        return {'reply_text': "Okay, I'll stop the audio.", 'media_operation': 'stop', 'media_ids': []}
+
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
     payload = {
         "text": "Stop the music",
         "conversation_id": "test-media-stop",
@@ -444,3 +451,134 @@ async def test_graph_review_persists_and_applies_requested_update(
     assert [message["role"] for message in session.json()["messages"]] == ["user", "model"]
     assert session.json()["actions"][0]["applied"] is True
     assert session.json()["title"] == "Please improve this fact's display wording."
+
+
+async def test_cc_week_and_continue_route_whole_playlists_with_saved_progress(client, media_dir, monkeypatch):
+    from agent_server.modes import chat
+    for week in (3, 4):
+        folder = media_dir / 'cc_cycle3' / f'week_{week}'
+        folder.mkdir(parents=True)
+        for subject in ('English', 'Science'):
+            (folder / f'{subject}.mp3').write_bytes(b'audio')
+    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
+    selected = {'reply_text': 'Playing.', 'media_ids': ['cc_cycle3_week_3'], 'media_operation': 'play'}
+
+    async def generate(system_prompt, history, user_text):
+        assert 'cc_week_3' in system_prompt
+        return selected
+
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    async def request(text):
+        response = await client.post('/conversation', json={'text': text, 'conversation_id': 'sample-cc-playback'})
+        assert response.status_code == 200
+        return response.json()
+
+    first = await request('Play CC week 3 songs')
+    data = first['actions'][0]['data']['service_data']
+    assert len(data['tracks']) == 2
+    assert all('week_3/' in track for track in data['tracks'])
+    knowledge_store.update_playback(data['session_id'], 'track_completed', 0)
+    knowledge_store.update_playback(data['session_id'], 'stopped')
+    selected.update(media_ids=['cc_cycle3_week_3'], media_operation='resume')
+    resumed = await request('Continue playing CC songs')
+    resumed_data = resumed['actions'][0]['data']['service_data']
+    assert resumed_data['start_index'] == 1
+    knowledge_store.update_playback(data['session_id'], 'track_completed', 1)
+    selected.update(media_ids=['cc_cycle3_week_4'], media_operation='play', reply_text='Ready for week 4!')
+    advanced = await request('Continue playing CC songs')
+    next_data = advanced['actions'][0]['data']['service_data']
+    assert all('week_4/' in track for track in next_data['tracks'])
+    assert next_data['start_index'] == 0
+    assert advanced['reply_text'] == 'Ready for week 4!'
+    media.invalidate_playlist_cache()
+
+
+async def test_playback_intent_and_reply_are_owned_by_model(client, media_dir, monkeypatch):
+    from agent_server.modes import chat
+    for week in (3, 4):
+        folder = media_dir / 'cc_cycle3' / f'week_{week}'
+        folder.mkdir(parents=True)
+        (folder / 'Science.mp3').write_bytes(b'audio')
+    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
+    previous = knowledge_store.begin_playback('cc_cycle3_week_3', 1)
+    knowledge_store.update_playback(previous['session_id'], 'track_completed', 0)
+    selected = {'reply_text': 'Let’s hear that week again!', 'media_ids': ['cc_cycle3_week_3'],
+                'media_operation': 'restart', 'reset_playlist_ids': []}
+
+    async def generate(system_prompt, history, user_text):
+        assert 'cc_cycle3_week_3: 1 of 1 completed; remaining: 0' in system_prompt
+        assert 'it does not infer a cycle or choose a next week' in system_prompt
+        assert 'cc_cycle3_week_4' in system_prompt
+        return selected
+
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    response = await client.post('/conversation', json={'text': 'Continue CC, but repeat that week first', 'conversation_id': 'sample-repeat'})
+    data = response.json()
+    assert data['reply_text'] == selected['reply_text']
+    assert all('week_3/' in file for file in data['actions'][0]['data']['service_data']['tracks'])
+    assert data['actions'][0]['data']['service_data']['start_index'] == 0
+    media.invalidate_playlist_cache()
+
+
+async def test_stop_keywords_do_not_override_llm_interpretation(client, monkeypatch):
+    from agent_server.modes import chat
+
+    async def generate(system_prompt, history, user_text):
+        assert user_text == "Don't stop the music; I am only asking a question."
+        return {'reply_text': 'Sure, what would you like to know?', 'media_ids': []}
+
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    response = await client.post('/conversation', json={'text': "Don't stop the music; I am only asking a question.", 'conversation_id': 'sample-negation'})
+    assert response.json()['actions'] == []
+    assert response.json()['reply_text'] == 'Sure, what would you like to know?'
+
+
+async def test_completed_resume_does_not_substitute_next_week(client, media_dir, monkeypatch):
+    from agent_server.modes import chat
+    for week in (3, 4):
+        folder = media_dir / 'cc_cycle3' / f'week_{week}'
+        folder.mkdir(parents=True)
+        (folder / 'Science.mp3').write_bytes(b'audio')
+    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
+    first = knowledge_store.begin_playback('cc_cycle3_week_3', 1)
+    knowledge_store.update_playback(first['session_id'], 'track_completed', 0)
+
+    async def generate(system_prompt, history, user_text):
+        return {'reply_text': 'That week is complete.', 'media_ids': ['cc_cycle3_week_3'], 'media_operation': 'resume'}
+
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    response = await client.post('/conversation', json={'text': 'Continue CC songs', 'conversation_id': 'sample-completed'})
+    assert response.json()['actions'] == []
+    assert response.json()['reply_text'] == 'That week is complete.'
+    assert knowledge_store.store.get_entity(first['session_id']).properties['status'] == 'completed'
+    media.invalidate_playlist_cache()
+
+
+@pytest.mark.parametrize('operation,reset_ids,expected', [
+    ('restart', ['cc_cycle3_week_4'], 'superseded'),
+    ('resume', ['cc_cycle3_week_4'], 'completed'),
+    ('restart', ['cc_cycle3_week_4', 'unknown'], 'completed'),
+])
+async def test_model_reset_scope_is_validated(client, media_dir, monkeypatch, operation, reset_ids, expected):
+    from agent_server.modes import chat
+    for week in (3, 4):
+        folder = media_dir / 'cc_cycle3' / f'week_{week}'
+        folder.mkdir(parents=True)
+        (folder / 'Science.mp3').write_bytes(b'audio')
+    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
+    previous = knowledge_store.begin_playback('cc_cycle3_week_4', 1)
+    knowledge_store.update_playback(previous['session_id'], 'track_completed', 0)
+
+    async def generate(system_prompt, history, user_text):
+        return {'reply_text': 'Here we go.', 'media_ids': ['cc_cycle3_week_3'],
+                'media_operation': operation, 'reset_playlist_ids': reset_ids}
+
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    response = await client.post('/conversation', json={'text': 'Start the sequence over', 'conversation_id': 'sample-reset'})
+    assert response.status_code == 200
+    assert knowledge_store.store.get_entity(previous['session_id']).properties['status'] == expected
+    media.invalidate_playlist_cache()

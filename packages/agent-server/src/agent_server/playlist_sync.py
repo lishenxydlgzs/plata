@@ -15,9 +15,10 @@ import time
 from urllib.parse import parse_qs, urlparse
 
 from fastapi import APIRouter, HTTPException, Query
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from . import media
+from .cc_catalog import enrich_manifest, read_manifest, write_manifest
 from .job_history import ExecutionHistory, active_run
 from datetime import datetime, timedelta
 
@@ -33,6 +34,14 @@ class NewSyncJob(BaseModel):
     url: str
     name: str = Field(min_length=1, max_length=100)
     interval_hours: int = Field(default=24, ge=1, le=8760)
+    cc_mode: bool = False
+    replace_legacy_cc: bool = False
+
+    @model_validator(mode="after")
+    def cc_settings(self):
+        if not self.cc_mode and self.replace_legacy_cc:
+            raise ValueError("Enable CC organization before replacing the CC catalog")
+        return self
 
     @field_validator("url")
     @classmethod
@@ -50,6 +59,8 @@ class NewSyncJob(BaseModel):
 class SyncSettings(BaseModel):
     interval_hours: int = Field(ge=1, le=8760)
     enabled: bool = True
+    cc_mode: bool | None = None
+    replace_legacy_cc: bool | None = None
 
 
 async def run_downloader(*args: str) -> str:
@@ -72,13 +83,14 @@ async def run_downloader(*args: str) -> str:
 
 
 class PlaylistSync:
-    def __init__(self, db_path: Path | None = None, maintenance=None):
+    def __init__(self, db_path: Path | None = None, maintenance=None, on_catalog_changed=None):
         self.db_path = db_path or Path(os.getenv("DB_DIR", "./data")) / "playlist-sync.sqlite3"
         self.db = None
         self.task = None
         self.maintenance = maintenance
         self.history = None
         self._active = False
+        self.on_catalog_changed = on_catalog_changed
 
     def connect(self):
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +106,10 @@ class PlaylistSync:
         columns = {row[1] for row in self.db.execute("PRAGMA table_info(jobs)")}
         if "queued_trigger" not in columns:
             self.db.execute("ALTER TABLE jobs ADD COLUMN queued_trigger TEXT NOT NULL DEFAULT 'scheduled'")
+        for column, definition in (("cc_mode", "INTEGER NOT NULL DEFAULT 0"),
+                                   ("replace_legacy_cc", "INTEGER NOT NULL DEFAULT 0")):
+            if column not in columns:
+                self.db.execute(f"ALTER TABLE jobs ADD COLUMN {column} {definition}")
         if self.maintenance:
             tomorrow = datetime.now().date() + timedelta(days=1)
             midnight = datetime.combine(tomorrow, datetime.min.time()).timestamp()
@@ -117,16 +133,30 @@ class PlaylistSync:
         try:
             with self.db:
                 self.db.execute(
-                    "INSERT INTO jobs(id,url,folder,interval_hours) VALUES(?,?,?,?)",
-                    (job_id, request.url, f"{slug(request.name)}_{job_id}", request.interval_hours),
+                    "INSERT INTO jobs(id,url,folder,interval_hours,cc_mode,replace_legacy_cc) VALUES(?,?,?,?,?,?)",
+                    (job_id, request.url, f"{slug(request.name)}_{job_id}", request.interval_hours,
+                     request.cc_mode, request.replace_legacy_cc),
                 )
         except sqlite3.IntegrityError:
             raise HTTPException(409, "This playlist already has a sync job")
         return self.get(job_id)
 
     def settings(self, job_id: str, request: SyncSettings):
-        self.get(job_id)
+        job = self.get(job_id)
+        changes = request.model_dump(include={"cc_mode", "replace_legacy_cc"}, exclude_unset=True)
+        if any(value is None for value in changes.values()):
+            raise HTTPException(422, "CC switches must be true or false")
+        changes = {key: value for key, value in changes.items() if value != job[key]}
+        if changes and job_id == MAINTENANCE_ID:
+            raise HTTPException(422, "CC settings apply only to playlist jobs")
+        if changes and job["state"] == "running":
+            raise HTTPException(409, "Wait for this import to finish before changing CC settings")
+        updated = {**job, **changes}
+        if not updated["cc_mode"] and updated["replace_legacy_cc"]:
+            raise HTTPException(422, "Enable CC organization before replacing the CC catalog")
         with self.db:
+            for key, value in changes.items():
+                self.db.execute(f"UPDATE jobs SET {key}=? WHERE id=?", (value, job_id))
             self.db.execute(
                 "UPDATE jobs SET interval_hours=?,enabled=?,next_run=?, "
                 "state=CASE WHEN state='queued' THEN 'idle' ELSE state END, "
@@ -151,7 +181,7 @@ class PlaylistSync:
         self._active = True
         run_id = self.history.begin(job["id"], trigger or job.get("queued_trigger", "scheduled"))
         token = active_run.set((self.history, run_id))
-        loggers = [logger, logging.getLogger("agent_server.maintenance")]
+        loggers = [logger, logging.getLogger("agent_server.maintenance"), logging.getLogger("agent_server.cc_catalog")]
         for target in loggers:
             target.addHandler(self.history)
         with self.db:
@@ -167,6 +197,8 @@ class PlaylistSync:
                                     (time.time(), job["id"]))
             else:
                 await self._sync_playlist(job)
+                if self.on_catalog_changed:
+                    self.on_catalog_changed()
                 result = self.get(job["id"])
                 summary = f"Imported {result['imported']} audio tracks"
                 if result["error"]:
@@ -204,6 +236,21 @@ class PlaylistSync:
             info = json.loads(await run_downloader("--flat-playlist", "--dump-single-json", job["url"]))
             folder = media.MEDIA_DIR / job["folder"]
             folder.mkdir(parents=True, exist_ok=True)
+            manifest = read_manifest(folder)
+            # Preserve a completed cutover through transient failures on later runs.
+            if not job["cc_mode"] or not job["replace_legacy_cc"]:
+                manifest["replace_legacy_cc"] = False
+            manifest["cc_mode"] = bool(job["cc_mode"])
+
+            def publish(video_id, title, filename):
+                track = manifest['tracks'].setdefault(video_id, {
+                    'subjects': [], 'cycles': [], 'cycle': None, 'all_cycles': False,
+                    'weeks': [], 'tags': [], 'topics': [], 'entities': [],
+                })
+                track.update(video_id=video_id, title=title, filename=filename)
+                write_manifest(folder, manifest)
+                media.invalidate_playlist_cache()
+
             staging = media.MEDIA_DIR / ".sync-staging"
             staging.mkdir(exist_ok=True)
             logger.info("Playlist loaded; checking for new audio")
@@ -213,7 +260,11 @@ class PlaylistSync:
                 video_id = entry.get("id", "")
                 if not re.fullmatch(r"[A-Za-z0-9_-]{11}", video_id):
                     continue
-                if any(folder.glob(f"*__{video_id}.mp3")):
+                title = entry.get("title") or video_id
+                existing = next(folder.glob(f"*__{video_id}.mp3"), None)
+                if existing and existing.stat().st_size > 0:
+                    if job["cc_mode"]:
+                        publish(video_id, title, existing.name)
                     logger.info("Already imported: %s", video_id)
                     continue
                 try:
@@ -227,13 +278,24 @@ class PlaylistSync:
                         )
                         if not target.is_file() or target.stat().st_size == 0:
                             raise RuntimeError("Conversion produced no audio")
-                        target.replace(folder / f"{slug(entry.get('title') or video_id)}__{video_id}.mp3")
+                        filename = f"{slug(title)}__{video_id}.mp3"
+                        target.replace(folder / filename)
+                    if job["cc_mode"]:
+                        publish(video_id, title, filename)
                     logger.info("Imported audio: %s", video_id)
                     imported += 1
                     media.invalidate_playlist_cache()
                 except Exception as exc:
                     logger.warning("Import failed for %s: %s", video_id, str(exc)[-1500:])
                     errors.append(f"{video_id}: {str(exc)[-1500:]}")
+            if job["cc_mode"]:
+                errors.extend(await enrich_manifest(folder, manifest, info.get('title') or job['folder']))
+                if not errors and any((folder / t["filename"]).is_file() for t in manifest["tracks"].values()):
+                    manifest["replace_legacy_cc"] = bool(job["replace_legacy_cc"])
+                unclassified = sum(not t["subjects"] for t in manifest["tracks"].values())
+                logger.info("CC catalog: %d tracks; %d unclassified", len(manifest["tracks"]), unclassified)
+            write_manifest(folder, manifest)
+            media.invalidate_playlist_cache()
         except Exception as exc:
             errors.append(str(exc)[-1500:])
         with self.db:
@@ -277,6 +339,14 @@ def sync_router(service: PlaylistSync) -> APIRouter:
     @router.post("", status_code=201)
     async def add_job(request: NewSyncJob):
         return service.add(request)
+
+    @router.get("/{job_id}/tracks")
+    async def tracks(job_id: str):
+        job = service.get(job_id)
+        manifest = read_manifest(media.MEDIA_DIR / job["folder"])
+        return {"cc_mode": manifest.get("cc_mode", False),
+                "replacement_active": manifest.get("replace_legacy_cc", False),
+                "tracks": list(manifest["tracks"].values())}
 
     @router.put("/{job_id}")
     async def update_job(job_id: str, request: SyncSettings):

@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 
 from .models import Action, ConversationMode, ConversationResponse
+from .cc_catalog import MANIFEST, playlist_groups, read_manifest
 
 logger = logging.getLogger(__name__)
 
@@ -13,8 +14,6 @@ MEDIA_DIR = Path(os.environ.get("MEDIA_DIR", "./media"))
 MEDIA_BASE = "media-source://media_source/local/kids_robot"
 MEDIA_EXTENSIONS = {".mp3", ".mp4", ".wav", ".ogg", ".flac", ".m4a"}
 SYSTEM_MEDIA_FILENAMES = {"timer.wav"}
-STOP_WORDS = ("stop", "pause", "quiet")
-MEDIA_WORDS = ("audio", "music", "song", "sound", "story")
 
 _playlist_cache: dict[str, list[dict[str, Any]]] | None = None
 
@@ -84,28 +83,58 @@ def scan_playlist_catalog() -> dict[str, list[dict[str, Any]]]:
         return {}
 
     playlists: dict[str, list[dict[str, Any]]] = {}
+    manifests = {path.parent: read_manifest(path.parent)
+                 for path in MEDIA_DIR.glob(f"*/{MANIFEST}")}
+    replace_legacy = any(
+        manifest.get("cc_mode") and manifest.get("replace_legacy_cc")
+        and any(Path(track["filename"]).name == track["filename"]
+                and _is_playable_file(folder / track["filename"])
+                for track in manifest["tracks"].values())
+        for folder, manifest in manifests.items()
+    )
+    cc_tracks = []
 
     for subdir in sorted(MEDIA_DIR.rglob("*")):
         if not subdir.is_dir() or any(part.startswith(".") for part in subdir.relative_to(MEDIA_DIR).parts):
             continue
         # Skip the root media dir itself
         rel_path = subdir.relative_to(MEDIA_DIR)
+        if replace_legacy and rel_path.parts[0] in {"cc_cycle1", "cc_cycle2", "cc_cycle3"}:
+            continue
         if str(rel_path) == ".":
             continue
 
         # Check if this directory has audio files directly in it
         tracks = []
+        manifest = manifests.get(subdir, {})
+        metadata = {track["filename"]: track for track in manifest.get("tracks", {}).values()}
         for path in sorted(subdir.iterdir()):
             if _is_playable_file(path):
-                tracks.append({
+                track = {
                     "file": str(path.relative_to(MEDIA_DIR)),
                     "title": _title_from_filename(path.stem),
                     "media_content_type": "music",
-                })
+                }
+                if manifest.get("cc_mode"):
+                    info = metadata.get(path.name, {})
+                    track.update({"title": info.get("title", track["title"]),
+                                  "subjects": info.get("subjects", []),
+                                  "cycle": info.get("cycle"), "all_cycles": info.get("all_cycles", False),
+                                  "weeks": info.get("weeks", [])})
+                    for key in ('cycles', 'tags', 'topics', 'entities', 'confidence', 'needs_review',
+                                'explanation', 'classification', 'classification_status', 'classification_error'):
+                        if key in info:
+                            track[key] = info[key]
+                    cc_tracks.append(track)
+                tracks.append(track)
 
         if tracks:
             playlist_id = str(rel_path).replace("/", "_").replace(" ", "_").lower()
             playlists[playlist_id] = tracks
+
+    for track in cc_tracks:
+        for group in playlist_groups(track):
+            playlists.setdefault(group, []).append(track)
 
     logger.info("Playlist catalog scanned: %d playlists from %s", len(playlists), MEDIA_DIR)
     _playlist_cache = playlists
@@ -154,7 +183,8 @@ def resolve_playlist(playlist_id: str) -> list[dict[str, Any]] | None:
             if tracks:
                 filtered = [
                     t for t in tracks
-                    if any(kw in t["file"].lower() for kw in keywords)
+                    if (subject in t["subjects"] if "subjects" in t
+                        else any(kw in t["file"].lower() for kw in keywords))
                 ]
                 if filtered:
                     return [
@@ -165,15 +195,9 @@ def resolve_playlist(playlist_id: str) -> list[dict[str, Any]] | None:
     return None
 
 
-def is_stop_request(text: str) -> bool:
-    """Check if the user wants to stop/pause audio."""
-    lower = text.lower()
-    return any(w in lower for w in STOP_WORDS) and any(w in lower for w in MEDIA_WORDS)
-
-
-def media_stop_response() -> ConversationResponse:
+def media_stop_response(reply_text: str) -> ConversationResponse:
     return ConversationResponse(
-        reply_text="Okay, I'll stop the audio.",
+        reply_text=reply_text,
         mode=ConversationMode.CHAT,
         continue_conversation=False,
         actions=[

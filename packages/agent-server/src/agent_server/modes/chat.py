@@ -11,6 +11,7 @@ from ..media import (
     get_playlist_catalog,
     media_play_response,
     media_playlist_response,
+    media_stop_response,
     resolve_playlist,
 )
 from ..models import ConversationMode, ConversationRequest, ConversationResponse
@@ -46,11 +47,29 @@ If they ask for a single song, use media_ids with one item. \
 If they ask for a playlist by name (e.g. "play CC week 5"), use the playlist ID. \
 Interpret likely speech-to-text variants in context: for example, "CC Psycho 3" \
 or "CC Cycle three" means "CC Cycle 3" when the user asks for a weekly playlist. \
-Set media_operation to "resume" when they ask to continue or resume, "restart" \
-when they ask to start over, and "play" for ordinary play requests. \
-For an implicit request like "continue what we were listening to", select the \
-best matching playlist from the recent playback state. The server owns the saved \
-position; never calculate or include a track index. \
+You interpret playback intent using the user's wording, conversation, available \
+playlists, and saved progress. Choose concrete media_ids from the catalog and \
+media_operation: play or restart starts the selected playlist fresh; resume \
+continues its unfinished songs; stop stops playback. For stop, use empty media_ids. \
+Interpret negations and quoted examples in context; mentioning stop does not by \
+itself request stopping. Keep reply_text in your own words. \
+For CC requests, these are defaults to interpret, not rigid command phrases: \
+"play CC week 3 songs" usually means that whole week's playlist; "continue playing \
+CC songs" usually means resume the most relevant unfinished week, or choose the \
+next available week numerically if that week is finished. Use progress facts, \
+including remaining counts and completed sessions, to make that choice yourself. \
+If no further week is available, explain and offer a restart rather than claiming \
+to play missing songs. Explicit requests to repeat, skip, change subjects, or \
+start elsewhere take precedence. Choose a cycle from context, recent playback, \
+and the source-cycle metadata, or ask when ambiguous. Songs without a cycle in \
+their title are shared across cycles; that does not establish a preferred cycle. \
+When starting the whole sequence over, select its first intended playlist with \
+restart and explicitly list the concrete reset_playlist_ids for the intended \
+sequence. For restarting only one week, leave reset_playlist_ids empty. Never \
+reset unrelated progress. Use reset_playlist_ids only for restart requests. \
+The backend executes your selection exactly; it does not infer a cycle or choose \
+a next week. Do not invent shortcut IDs such as cc_week_3. The server owns each \
+playlist's saved song position; never calculate or return a track index. \
 If they ask for multiple songs (e.g. "play some bedtime music", \
 "play a few songs"), pick 3-8 good matches from individual songs. \
 If no good match exists or the user isn't asking for media, set media_ids to an empty list.
@@ -70,7 +89,7 @@ Available media:
 {media_list}
 
 Respond ONLY with JSON in this exact shape:
-{{"reply_text": "your spoken reply here", "media_ids": ["id1", "id2"], "media_operation": "play", "timer_seconds": null, "topics": ["topic1", "topic2"], "facts": [], "behavior_events": [], "learning_events": [], "memory_query": null}}
+{{"reply_text": "your spoken reply here", "media_ids": ["id1", "id2"], "media_operation": "play", "reset_playlist_ids": [], "timer_seconds": null, "topics": ["topic1", "topic2"], "facts": [], "behavior_events": [], "learning_events": [], "memory_query": null}}
 
 If media_ids has items, reply_text should tell the child what you're about to play. \
 If media_ids is empty, reply_text is your normal conversational response.
@@ -187,6 +206,17 @@ def _build_system_prompt(knowledge: KnowledgeStore) -> str:
         media_list += "\n\nTo play a specific subject from a playlist, append the subject: " \
                       "e.g. cc_cycle3_week_5_science, cc_cycle3_week_3_bible, cc_cycle3_week_1_math. " \
                       "Subjects: bible, english, history, science, latin, geography, timeline, math."
+        media_list += "\nCurated CC groups use cc_<subject>, cc_cycle<N>, and cc_cycle<N>_week_<W> " \
+                      "with optional subject suffixes. Use only groups listed above. " \
+                      "cc_unclassified contains songs whose metadata does not identify a subject. " \
+                      "cc_tag_*, cc_topic_*, and cc_entity_* groups come from agent-assigned metadata; " \
+                      "use these listed groups for relevant thematic requests."
+
+        source_cycles = sorted({cycle for tracks in playlists.values() for track in tracks
+                                for cycle in track.get('cycles', [track['cycle']] if track.get('cycle') else [])})
+        shared = any(track.get('all_cycles') for tracks in playlists.values() for track in tracks)
+        media_list += f"\nCC cycles explicitly identified in source titles: {source_cycles or 'none'}. " \
+                      f"Shared songs with no cycle in their title present: {shared}."
 
     memory_context = knowledge.build_memory_prompt()
     family_values_context = knowledge.build_guidance_prompt()
@@ -253,7 +283,7 @@ class ChatHandler:
         reply_text = result.get("reply_text") or FALLBACK_REPLY
         media_ids = result.get("media_ids") or []
         media_operation = result.get("media_operation", "play")
-        if media_operation not in {"play", "resume", "restart"}:
+        if media_operation not in {"play", "resume", "restart", "stop"}:
             logger.warning("Ignoring invalid media_operation: %r", media_operation)
             media_operation = "play"
         # Backwards compat: handle old single media_id format
@@ -272,6 +302,10 @@ class ChatHandler:
             facts_raw,
             kid_events_raw,
         )
+
+        if media_operation == 'stop':
+            self._knowledge.stop_active_playback()
+            return media_stop_response(reply_text)
 
         if (
             isinstance(timer_seconds, int)
@@ -307,10 +341,22 @@ class ChatHandler:
         # Record message in knowledge graph
         playback_session: dict | None = None
         if playlist_id:
+            reset_ids = result.get('reset_playlist_ids') or []
+            if media_operation == 'restart' and reset_ids:
+                if isinstance(reset_ids, list) and all(isinstance(key, str) and key in playlists for key in reset_ids):
+                    self._knowledge.reset_playback(reset_ids)
+                else:
+                    logger.warning('Ignoring invalid playlist reset selection')
             try:
                 playback_session = self._knowledge.begin_playback(
                     playlist_id, len(resolved_items), media_operation
                 )
+                session = self._knowledge.store.get_entity(playback_session["session_id"])
+                by_file = {item['file']: item for item in resolved_items}
+                resolved_items = [by_file[file] for file in session.properties['track_files'] if file in by_file]
+                if playback_session['start_index'] >= len(resolved_items):
+                    resolved_items = []
+                    is_playlist = False
             except KeyError:
                 logger.exception("Playlist is missing from ontology: %s", playlist_id)
 

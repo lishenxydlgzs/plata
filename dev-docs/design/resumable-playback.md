@@ -13,6 +13,7 @@ from a playlist to each track stores its zero-based `position`.
 Each playback attempt is a `playback_session` entity with these properties:
 
 - `playlist_id`
+- `track_files`: ordered file identities for this playback attempt
 - `next_track_index`
 - `track_count`
 - `status`: `playing`, `interrupted`, `stopped`, `completed`, `failed`, or
@@ -20,19 +21,24 @@ Each playback attempt is a `playback_session` entity with these properties:
 - `started_at`, `updated_at`, and optional `completed_at`
 
 The session has a `uses` link to its playlist. The mutable cursor is stored on
-the session entity; media ordering remains on the playlist's `contains` links.
+the session entity. On resume, completed file identities are reconciled with the
+current catalog; new songs remain unplayed even if they sort before older songs.
 
 ## Command Semantics
 
 - `play` and `restart` create a session at index zero.
 - Starting over marks older incomplete sessions for the same playlist as
   `superseded`, so they cannot unexpectedly become resume candidates later.
-- `resume` reuses the newest incomplete session for the selected playlist, or
-  starts at zero when no incomplete session exists.
+- `resume` reuses the newest saved session for the selected playlist, or starts
+  at zero when no matching file identities remain. A fully completed selection
+  is a no-op; choosing a next playlist belongs to the model.
+- `stop` preserves progress and sends the HA stop action.
+- `reset_playlist_ids`, used with restart, supersedes progress only for the
+  concrete catalog IDs explicitly chosen by the model.
 - Starting or resuming a playlist interrupts any other active session while
   retaining its cursor.
-- A plain request such as "play week 5" starts from the beginning. "Continue
-  week 5" resumes saved progress.
+- Prompt guidance describes ordinary play/continue/restart expectations, but the
+  model interprets conversational context, exceptions, and ambiguity.
 
 The LLM identifies the playlist and operation. The backend owns cursor lookup
 and never asks the LLM to calculate a track position.
@@ -43,8 +49,9 @@ model to interpret likely speech-to-text variants such as "CC Psycho 3" and
 
 ## Playback Context
 
-The system prompt includes up to three recently updated incomplete sessions,
-with playlist ID, completed count, total count, and next track title. This lets
+The system prompt includes the latest state for up to 30 recently updated
+playlists, including completed sessions, with completed/remaining counts, next
+unplayed title, status, and last activity. These are facts, not next-week actions. This lets
 the LLM resolve requests such as "continue what we were listening to" without
 including the complete playback history.
 
