@@ -8,6 +8,7 @@ tools, and arbitrary state never become trusted model instructions.
 import asyncio
 import json
 import logging
+from typing import Literal
 
 from ag_ui.core import (
     CustomEvent, EventType, MessagesSnapshotEvent, RunAgentInput,
@@ -17,10 +18,12 @@ from ag_ui.encoder import EventEncoder
 from ag_ui_strands import StrandsAgent
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import StreamingResponse
+from pydantic import BaseModel, ConfigDict, Field
 from strands import tool
 
 from .agent_runtime import ModelCallLimit, StagedToolGuard, make_agent
 from .logbook_chat import ChatRequest, NoteContent, ToolCall, PROMPT
+from .run_diagnostics import RunDiagnostics, error_details
 
 logger = logging.getLogger(__name__)
 
@@ -28,16 +31,36 @@ logger = logging.getLogger(__name__)
 LOGBOOK_PROMPT = PROMPT.split('Return JSON ONLY:')[0] + """
 Use the provided native tools to read notes and stage changes. You may call
 stage_note_changes once per turn, with at most five changes. Reads must happen
-before staging. Staged changes are committed atomically with your final reply
+before staging: call read_note or list_notes directly as native tools, never
+inside stage_note_changes. Its changes array contains write operations only.
+After a successful stage, provide your final reply without calling more tools.
+Staged changes are committed atomically with your final reply
 when this run succeeds. Tool results saying 'staged' do not mean committed.
 If staging fails, correct the arguments and try again; do not claim success.
 After tools, respond naturally in plain text, not JSON, using 1–2 sentences.
 Never change a note without first reading it. Never delete, restore, or change
 sharing unless the parent explicitly requests it. Selected notes are context.
 Every created/updated note needs at least one verbatim quotation from a user
-message with its source ID. Use only IDs from the supplied directory. Keep
+message with its source ID from messages or the note's sources. Association IDs
+(person_ids, topic_ids, guidance_ids) come only from the supplied directory. Keep
 observations, author reflections, your suggestions, and parking-lot items separate.
 """
+
+
+class NoteWriteArguments(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+
+    note_id: str | None = Field(default=None, description='Required for all operations except create_note.')
+    content: NoteContent | None = Field(default=None, description='Required for create_note and update_note; the complete note content, preserving earlier material on update.')
+    visibility: Literal['parents', 'family'] | None = Field(default=None, description='Required only for set_note_visibility.')
+
+
+class NoteWriteCall(BaseModel):
+    """The native staging contract excludes standalone read tools."""
+
+    model_config = ConfigDict(extra='forbid')
+    name: Literal['create_note', 'update_note', 'delete_note', 'restore_note', 'set_note_visibility']
+    arguments: NoteWriteArguments
 
 
 def messages_for(session):
@@ -57,6 +80,8 @@ class LogbookRun:
         self.calls = []
         self.staged = False
         self.validation_failed = False
+        self.committed = False
+        self.diagnostics = None
 
     def tools(self):
         @tool
@@ -76,7 +101,7 @@ class LogbookRun:
             return self.service._read(note_id, self.prepared['allowed'], self.prepared['snapshots'])
 
         @tool
-        async def stage_note_changes(changes: list[ToolCall]) -> dict:
+        async def stage_note_changes(changes: list[NoteWriteCall]) -> dict:
             """Validate a batch of note changes for atomic commit after your final reply.
 
             Args:
@@ -84,11 +109,15 @@ class LogbookRun:
                     restore_note, or set_note_visibility calls. create_note needs
                     content; update_note needs note_id and content. Other calls
                     need note_id, plus visibility for set_note_visibility.
+                    Never include read_note or list_notes here; call those tools
+                    directly before staging. After staging, give your final reply.
             """
             self.validation_failed = True
             if self.staged:
                 raise ValueError('Changes have already been staged for this turn.')
-            calls = [ToolCall.model_validate(change) for change in changes]
+            validated = [NoteWriteCall.model_validate(change) for change in changes]
+            calls = [ToolCall(name=change.name, arguments=change.arguments.model_dump(exclude_none=True))
+                     for change in validated]
             if not 1 <= len(calls) <= 5 or any(c.name in ('read_note', 'list_notes') for c in calls):
                 raise ValueError('Stage one to five write operations.')
             self.service._validate(calls, self.prepared['allowed'], self.prepared['snapshots'],
@@ -96,11 +125,26 @@ class LogbookRun:
             self.calls = calls
             self.staged = True
             self.validation_failed = False
+            if self.diagnostics:
+                self.diagnostics.emit('changes_staged', writes=len(calls))
             return {'status': 'staged', 'count': len(calls)}
 
         return [list_notes, read_note, stage_note_changes]
 
     async def events(self, input_data, *, model=None):
+        self.diagnostics = RunDiagnostics(self.session_id, self.request.request_id, input_data.run_id)
+        self.diagnostics.emit('run_started')
+        try:
+            async for event in self._events(input_data, model=model):
+                yield event
+        except Exception as error:
+            self.diagnostics.emit('run_exception', **error_details(error))
+            raise
+        finally:
+            self.diagnostics.finish(committed=self.committed, staged=self.staged,
+                                    validation_failed=self.validation_failed, writes=len(self.calls))
+
+    async def _events(self, input_data, *, model=None):
         context = json.dumps(self.prepared['payload'], ensure_ascii=False)
         prompt = (LOGBOOK_PROMPT + '\nNote content schema:\n'
                   + json.dumps(NoteContent.model_json_schema())
@@ -108,7 +152,7 @@ class LogbookRun:
         limit = ModelCallLimit()
         guard = StagedToolGuard()
         agent = make_agent(prompt, self.tools(), model=model)
-        adapter = StrandsAgent(agent, name='logbook', hooks=[limit, guard])
+        adapter = StrandsAgent(agent, name='logbook', hooks=[self.diagnostics, limit, guard])
         trusted = RunAgentInput(
             thread_id=self.session_id, run_id=input_data.run_id,
             messages=[UserMessage(id=self.request.request_id, content=self.request.text)],
@@ -126,6 +170,8 @@ class LogbookRun:
                     held_text.append(event)
                     continue
                 if event.type == EventType.RUN_ERROR:
+                    self.diagnostics.emit('agent_error', reason='round_limit' if limit.calls > limit.maximum
+                                          else 'agent_unavailable', tool_failed=guard.failed)
                     yield RunErrorEvent(message='The assistant could not finish. Retry the saved message.',
                                         code='AGENT_UNAVAILABLE')
                     return
@@ -136,6 +182,8 @@ class LogbookRun:
                         raise ValueError('The assistant did not complete the run.')
                     session = self.service.complete(self.session_id, self.request, self.prepared,
                                                     ''.join(text_parts), self.calls)
+                    self.committed = True
+                    self.diagnostics.emit('commit_succeeded', writes=len(self.calls))
                     for held_event in held_text:
                         yield held_event
                     yield CustomEvent(name='notes_committed', value={
@@ -175,6 +223,8 @@ def browser_agent_router(service, name="logbook"):
                     prepared = (service.prepare(body.thread_id, request) if name == "logbook"
                                 else await service.prepare(body.thread_id, request))
                     if prepared['complete']:
+                        if name == 'logbook':
+                            RunDiagnostics(body.thread_id, request.request_id, body.run_id).emit('request_replayed')
                         yield RunStartedEvent(thread_id=body.thread_id, run_id=body.run_id)
                         yield MessagesSnapshotEvent(messages=messages_for(prepared['session']))
                         yield RunFinishedEvent(thread_id=body.thread_id, run_id=body.run_id)
@@ -184,7 +234,9 @@ def browser_agent_router(service, name="logbook"):
                     async for event in events:
                         yield event
                 except Exception as error:
-                    logger.warning('%s run failed: %s', name, type(error).__name__)
+                    logger.warning('%s run failed: %s', name, json.dumps({
+                        'session_id': body.thread_id, 'request_id': request.request_id,
+                        'run_id': body.run_id, **error_details(error)}))
                     yield RunErrorEvent(message='The message could not be completed. Reload the conversation and retry.',
                                         code='RUN_FAILED')
 

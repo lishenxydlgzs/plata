@@ -7,7 +7,7 @@ from strands.models.model import Model
 from agent_server.agent_stream import LogbookRun
 from agent_server.knowledge import KnowledgeStore
 from agent_server.journal import JournalService
-from agent_server.logbook_chat import ChatRequest, LogbookChat
+from agent_server.logbook_chat import ChatRequest, LogbookChat, ToolCall
 
 
 class ScriptedModel(Model):
@@ -233,3 +233,163 @@ async def test_closing_stream_before_completion_does_not_commit(chat):
     await stream.aclose()
     assert chat.journals.list() == []
     assert chat.session(body.thread_id)['pending']
+
+
+def diagnostic_events(caplog):
+    return [json.loads(r.message.removeprefix('logbook_run ')) for r in caplog.records
+            if r.name == 'agent_server.run_diagnostics']
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_explain_quote_failure_and_recovery_without_content(chat, caplog):
+    caplog.set_level('INFO', logger='agent_server.run_diagnostics')
+    run, body = make_run(chat)
+    model = ScriptedModel([
+        {'name': 'stage_note_changes', 'input': {'changes': [note_change(
+            run.prepared['source_id'], 'Private invented quote.')] }},
+        {'name': 'stage_note_changes', 'input': {'changes': [note_change(run.prepared['source_id'])]}},
+        'A private response.',
+    ])
+    events = [e async for e in run.events(body, model=model)]
+    assert events[-1].type == EventType.RUN_FINISHED
+    logs = diagnostic_events(caplog)
+    failure = next(e for e in logs if e.get('status') == 'error')
+    assert failure['tool'] == 'stage_note_changes'
+    assert failure['reason'] == 'quote_mismatch'
+    assert failure['round'] == 1
+    assert logs[-1]['committed'] is True
+    assert logs[-1]['writes'] == 1
+    assert all(e['request_id'] == run.request.request_id and e['run_id'] == body.run_id for e in logs)
+    assert 'Private invented quote' not in json.dumps(logs)
+    assert run.request.text not in json.dumps(logs)
+    assert 'A private response' not in json.dumps(logs)
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_capture_sdk_validation_before_tool_body(chat, caplog):
+    caplog.set_level('INFO', logger='agent_server.run_diagnostics')
+    run, body = make_run(chat)
+    with pytest.raises(ValueError):
+        _ = [e async for e in run.events(body, model=ScriptedModel([
+            {'name': 'stage_note_changes', 'input': {'changes': 'Private invalid value.'}}, 'Saved.']))]
+    logs = diagnostic_events(caplog)
+    failure = next(e for e in logs if e.get('status') == 'error')
+    assert failure['reason'] == 'schema_validation'
+    assert failure['validation'][0]['path'] == ['changes']
+    assert logs[-1]['committed'] is False
+    assert 'Private invalid value' not in json.dumps(logs)
+
+
+@pytest.mark.asyncio
+async def test_diagnostics_identify_round_limit_and_no_commit(chat, caplog):
+    caplog.set_level('INFO', logger='agent_server.run_diagnostics')
+    run, body = make_run(chat)
+    events = [e async for e in run.events(body, model=ScriptedModel([
+        {'name': 'list_notes', 'input': {}} for _ in range(4)]))]
+    assert events[-1].type == EventType.RUN_ERROR
+    logs = diagnostic_events(caplog)
+    assert any(e.get('reason') == 'round_limit' for e in logs)
+    assert logs[-1]['committed'] is False
+    assert chat.session(body.thread_id)['pending']
+    assert len([e for e in logs if e['event'] == 'tool_completed']) == 4
+
+
+def test_diagnostic_error_redacts_unknown_fields_and_exception_text():
+    from pydantic import ValidationError
+    from agent_server.logbook_chat import ToolCall
+    from agent_server.run_diagnostics import error_details
+    with pytest.raises(ValidationError) as caught:
+        ToolCall.model_validate({'name': 'create_note', 'arguments': {}, 'Private field': 'Private value'})
+    details = error_details(caught.value)
+    assert details['validation'][0]['path'] == ['<field>']
+    assert 'Private' not in json.dumps(details)
+    assert error_details(ValueError('Private exception text')) == {
+        'error_type': 'ValueError', 'reason': 'unclassified'}
+
+
+@pytest.mark.asyncio
+async def test_staging_schema_excludes_reads_and_recovers_from_mixed_batch(chat, caplog):
+    caplog.set_level('INFO', logger='agent_server.run_diagnostics')
+    initial, body = make_run(chat)
+    chat.complete(body.thread_id, initial.request, initial.prepared, 'Recorded.',
+                  [ToolCall.model_validate(note_change(initial.prepared['source_id']))])
+    note_id = chat.journals.list()[0]['id']
+    request = ChatRequest(text='Teamwork made it easier.', request_id='follow-up', selected_note_id=note_id)
+    prepared = chat.prepare(body.thread_id, request)
+    run = LogbookRun(chat, body.thread_id, request, prepared)
+    schema = run.tools()[-1].tool_spec['inputSchema']['json']
+    names = schema['$defs']['NoteWriteCall']['properties']['name']['enum']
+    assert set(names) == {'create_note', 'update_note', 'delete_note', 'restore_note', 'set_note_visibility'}
+    assert schema['$defs']['NoteWriteCall']['properties']['arguments']['$ref'] == '#/$defs/NoteWriteArguments'
+    assert {'observations', 'parking_lot', 'original_quotes'} <= set(schema['$defs']['NoteContent']['required'])
+    assert schema['$defs']['NoteContent']['properties']['original_quotes']['items']['$ref'] == '#/$defs/Quote'
+    assert set(schema['$defs']['Quote']['required']) == {'message_id', 'text'}
+    change = note_change(initial.prepared['source_id'])
+    change['name'] = 'update_note'
+    change['arguments']['note_id'] = note_id
+    change['arguments']['content']['author_reflections'] = request.text
+    events = [e async for e in run.events(body, model=ScriptedModel([
+        {'name': 'stage_note_changes', 'input': {'changes': [
+            {'name': 'read_note', 'arguments': {'note_id': note_id}}, change]}},
+        {'name': 'read_note', 'input': {'note_id': note_id}},
+        {'name': 'stage_note_changes', 'input': {'changes': [change]}},
+        'Your reflection is included.',
+    ]))]
+    assert events[-1].type == EventType.RUN_FINISHED
+    failures = [e for e in diagnostic_events(caplog) if e.get('status') == 'error']
+    assert len(failures) == 1
+    assert failures[0]['reason'] == 'schema_validation'
+    assert failures[0]['operations'] == ['read_note', 'update_note']
+    assert failures[0]['validation'][0]['path'] == ['changes', 0, 'name']
+    assert len(chat.journals.get(note_id)['revisions']) == 2
+    assert chat.session(body.thread_id)['pending'] is None
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize('malformation', ['missing_field', 'quote_strings', 'misplaced_note_id'])
+async def test_typed_note_contract_rejects_malformed_content_then_recovers(chat, caplog, malformation):
+    caplog.set_level('INFO', logger='agent_server.run_diagnostics')
+    run, body = make_run(chat)
+    invalid = note_change(run.prepared['source_id'])
+    if malformation == 'missing_field':
+        del invalid['arguments']['content']['parking_lot']
+    elif malformation == 'quote_strings':
+        invalid['arguments']['content']['original_quotes'] = ['Private quotation.']
+    else:
+        invalid['note_id'] = 'Private misplaced ID'
+    events = [e async for e in run.events(body, model=ScriptedModel([
+        {'name': 'stage_note_changes', 'input': {'changes': [invalid]}},
+        {'name': 'stage_note_changes', 'input': {'changes': [note_change(run.prepared['source_id'])]}},
+        'Recorded.',
+    ]))]
+    assert events[-1].type == EventType.RUN_FINISHED
+    logs = diagnostic_events(caplog)
+    errors = [e for e in logs if e.get('status') == 'error']
+    assert len(errors) == 1 and errors[0]['reason'] == 'schema_validation'
+    assert 'Private' not in json.dumps(logs)
+    assert len(chat.journals.list()) == 1
+    assert len(chat.journals.get(chat.journals.list()[0]['id'])['revisions']) == 1
+
+
+@pytest.mark.asyncio
+async def test_typed_optional_arguments_preserve_delete_restore_and_sharing(chat):
+    initial, body = make_run(chat)
+    chat.complete(body.thread_id, initial.request, initial.prepared, 'Recorded.',
+                  [ToolCall.model_validate(note_change(initial.prepared['source_id']))])
+    note_id = chat.journals.list()[0]['id']
+    for operation, text, extra in [
+        ('delete_note', 'Remove this note.', {}),
+        ('restore_note', 'Restore this note.', {}),
+        ('set_note_visibility', 'Share this note with the family.', {'visibility': 'family'}),
+    ]:
+        request = ChatRequest(text=text, request_id=operation, selected_note_id=note_id)
+        prepared = chat.prepare(body.thread_id, request)
+        run = LogbookRun(chat, body.thread_id, request, prepared)
+        events = [e async for e in run.events(body, model=ScriptedModel([
+            {'name': 'stage_note_changes', 'input': {'changes': [
+                {'name': operation, 'arguments': {'note_id': note_id, **extra}}]}}, 'Done.',
+        ]))]
+        assert events[-1].type == EventType.RUN_FINISHED
+        note = chat.journals.get(note_id)
+        assert note['archived'] == (operation == 'delete_note')
+    assert note['visibility'] == 'family'
