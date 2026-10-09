@@ -33,6 +33,7 @@ from .models import (
     PlaybackEvent,
 )
 from .router import MessageRouter
+from .telegram import TelegramService, telegram_router
 from .playlist_sync import PlaylistSync, sync_router, jobs_router, MAINTENANCE_ID
 
 LOG_DIR = Path(os.environ.get("LOG_DIR", "./logs"))
@@ -60,6 +61,7 @@ logger = logging.getLogger(__name__)
 conversation_db = ConversationDB()
 knowledge_store = KnowledgeStore()
 message_router = MessageRouter(conversation_db, knowledge_store)
+telegram = TelegramService(message_router, knowledge_store)
 maintenance_job = MaintenanceJob(knowledge_store)
 graph_review = GraphReviewService(knowledge_store, conversation_db, maintenance_job)
 graph_browser = GraphBrowserReview(graph_review)
@@ -77,14 +79,17 @@ async def lifespan(app: FastAPI):
     knowledge_store.sync_media_catalog()
     playlist_sync.start()
     try:
+        await telegram.start()
         yield
     finally:
+        await telegram.stop()
         await playlist_sync.stop()
         await conversation_db.close()
 
 
 app = FastAPI(title="Kids Robot Agent Server", version="0.1.0", lifespan=lifespan)
 
+app.include_router(telegram_router(telegram))
 app.include_router(sync_router(playlist_sync))
 app.include_router(jobs_router(playlist_sync))
 app.include_router(browser_agent_router(logbook_chat))

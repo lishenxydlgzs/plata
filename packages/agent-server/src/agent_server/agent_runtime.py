@@ -102,20 +102,26 @@ def make_agent(prompt, tools=(), *, model=None, hooks=()):
 
 
 async def generate_chat_json(system_prompt, conversation_history, user_text, *,
-                             timeout_seconds=None, max_output_tokens=1536, temperature=0.7):
+                             timeout_seconds=None, max_output_tokens=1536, temperature=0.7, tools=()):
     """Run a bounded structured Strands turn for voice and domain services.
 
     Device and memory effects stay in validated domain services, after complete
     JSON output. No partial model response or failed attempt can execute them.
     """
     model = FallbackGeminiModel(timeout_seconds=timeout_seconds,
-        max_output_tokens=max_output_tokens, buffered=True, json_output=True,
+        max_output_tokens=max_output_tokens, buffered=True, json_output=not bool(tools),
         temperature=temperature)
-    agent = make_agent(system_prompt, model=model, hooks=[ModelCallLimit(maximum=1)])
+    if tools:
+        system_prompt += "\nUse the available read-only tools as needed. After tool use, return ONLY the final JSON object in the documented response format, without markdown."
+    agent = make_agent(system_prompt, tools=tools, model=model,
+                       hooks=[ModelCallLimit(maximum=4 if tools else 1)])
     agent.messages = [{'role': 'user' if m['role'] == 'user' else 'assistant',
                        'content': [{'text': m['text']}]} for m in conversation_history]
     result = await agent.invoke_async(user_text)
-    value = json.loads(str(result))
+    text = str(result).strip()
+    if text.startswith("```json\n") and text.endswith("\n```"):
+        text = text[len("```json\n"):-len("\n```")]
+    value = json.loads(text)
     if not isinstance(value, dict):
         raise ValueError('The agent returned an invalid structured response.')
     return value

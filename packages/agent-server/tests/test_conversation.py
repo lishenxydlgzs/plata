@@ -40,7 +40,7 @@ async def test_conversation_returns_chat_response(
 ):
     from agent_server.modes import chat
 
-    async def fake_generate_chat_json(system_prompt, history, user_text):
+    async def fake_generate_chat_json(system_prompt, history, user_text, **kwargs):
         return {"reply_text": "Hello friend!", "media_id": None}
 
     monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
@@ -65,7 +65,7 @@ async def test_conversation_returns_media_play_action(
 ):
     from agent_server.modes import chat
 
-    async def fake_generate_chat_json(system_prompt, history, user_text):
+    async def fake_generate_chat_json(system_prompt, history, user_text, **kwargs):
         return {"reply_text": "Let's listen to Bedtime!", "media_id": "bedtime"}
 
     monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
@@ -100,7 +100,7 @@ async def test_conversation_returns_media_play_action(
 async def test_conversation_returns_media_stop_action(client: AsyncClient, monkeypatch):
     from agent_server.modes import chat
 
-    async def generate(system_prompt, history, user_text):
+    async def generate(system_prompt, history, user_text, **kwargs):
         assert 'Interpret negations' in system_prompt
         return {'reply_text': "Okay, I'll stop the audio.", 'media_operation': 'stop', 'media_ids': []}
 
@@ -123,7 +123,7 @@ async def test_conversation_sets_timer_from_llm(
 ):
     from agent_server.modes import chat
 
-    async def fake_generate_chat_json(system_prompt, history, user_text):
+    async def fake_generate_chat_json(system_prompt, history, user_text, **kwargs):
         return {
             "reply_text": "Okay! I'll let you know in 5 minutes.",
             "media_ids": [],
@@ -152,7 +152,7 @@ async def test_llm_can_return_a_timer_action(
 ):
     from agent_server.modes import chat
 
-    async def fake_generate_chat_json(system_prompt, history, user_text):
+    async def fake_generate_chat_json(system_prompt, history, user_text, **kwargs):
         return {
             "reply_text": "Okay! I'll let you know in 10 seconds.",
             "media_ids": [],
@@ -175,7 +175,7 @@ async def test_conversation_fallback_on_llm_failure(
 ):
     from agent_server.modes import chat
 
-    async def fake_generate_chat_json(system_prompt, history, user_text):
+    async def fake_generate_chat_json(system_prompt, history, user_text, **kwargs):
         raise RuntimeError("LLM down")
 
     monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
@@ -198,7 +198,7 @@ async def test_conversation_unknown_media_id_falls_back_to_chat(
 ):
     from agent_server.modes import chat
 
-    async def fake_generate_chat_json(system_prompt, history, user_text):
+    async def fake_generate_chat_json(system_prompt, history, user_text, **kwargs):
         return {"reply_text": "Let me play that!", "media_id": "nonexistent_song"}
 
     monkeypatch.setattr(chat, "generate_chat_json", fake_generate_chat_json)
@@ -224,7 +224,7 @@ async def test_cc_transcription_variant_is_sent_to_llm_with_guidance(
 
     called = False
 
-    async def fake_generate_chat_json(system_prompt, history, user_text):
+    async def fake_generate_chat_json(system_prompt, history, user_text, **kwargs):
         nonlocal called
         called = True
         assert user_text == "Play CC Psycho 3 week one"
@@ -316,7 +316,7 @@ async def test_family_values_are_included_in_chat_prompt(
         guidance="Encourage specific helping behavior.",
     )
 
-    async def fake_generate_chat_json(system_prompt, history, user_text):
+    async def fake_generate_chat_json(system_prompt, history, user_text, **kwargs):
         assert "Family values for encouragement and correction" in system_prompt
         assert "helpfulness: Helpfulness" in system_prompt
         return {
@@ -350,7 +350,7 @@ async def test_parent_described_kid_event_is_logged_with_value(
         guidance="Encourage specific helping behavior.",
     )
 
-    async def fake_generate_chat_json(system_prompt, history, user_text):
+    async def fake_generate_chat_json(system_prompt, history, user_text, **kwargs):
         return {
             "reply_text": "Sample Child showed helpfulness by cleaning up.",
             "media_ids": [],
@@ -423,7 +423,7 @@ async def test_graph_review_persists_and_applies_requested_update(
     fact = knowledge_store.store.get_entity_by_identifier("fact_key", "review test|is_a|sample")
     assert fact
 
-    async def fake_review_response(system_prompt, history, user_text):
+    async def fake_review_response(system_prompt, history, user_text, **kwargs):
         assert "Review Test is a sample" in system_prompt
         assert history == []  # Current user text is supplied separately, exactly once.
         return {
@@ -464,7 +464,7 @@ async def test_cc_week_and_continue_route_whole_playlists_with_saved_progress(cl
     knowledge_store.sync_media_catalog()
     selected = {'reply_text': 'Playing.', 'media_ids': ['cc_cycle3_week_3'], 'media_operation': 'play'}
 
-    async def generate(system_prompt, history, user_text):
+    async def generate(system_prompt, history, user_text, **kwargs):
         assert 'cc_week_3' in system_prompt
         return selected
 
@@ -507,7 +507,7 @@ async def test_playback_intent_and_reply_are_owned_by_model(client, media_dir, m
     selected = {'reply_text': 'Let’s hear that week again!', 'media_ids': ['cc_cycle3_week_3'],
                 'media_operation': 'restart', 'reset_playlist_ids': []}
 
-    async def generate(system_prompt, history, user_text):
+    async def generate(system_prompt, history, user_text, **kwargs):
         assert 'cc_cycle3_week_3: 1 of 1 completed; remaining: 0' in system_prompt
         assert 'it does not infer a cycle or choose a next week' in system_prompt
         assert 'cc_cycle3_week_4' in system_prompt
@@ -525,7 +525,7 @@ async def test_playback_intent_and_reply_are_owned_by_model(client, media_dir, m
 async def test_stop_keywords_do_not_override_llm_interpretation(client, monkeypatch):
     from agent_server.modes import chat
 
-    async def generate(system_prompt, history, user_text):
+    async def generate(system_prompt, history, user_text, **kwargs):
         assert user_text == "Don't stop the music; I am only asking a question."
         return {'reply_text': 'Sure, what would you like to know?', 'media_ids': []}
 
@@ -546,7 +546,7 @@ async def test_completed_resume_does_not_substitute_next_week(client, media_dir,
     first = knowledge_store.begin_playback('cc_cycle3_week_3', 1)
     knowledge_store.update_playback(first['session_id'], 'track_completed', 0)
 
-    async def generate(system_prompt, history, user_text):
+    async def generate(system_prompt, history, user_text, **kwargs):
         return {'reply_text': 'That week is complete.', 'media_ids': ['cc_cycle3_week_3'], 'media_operation': 'resume'}
 
     monkeypatch.setattr(chat, 'generate_chat_json', generate)
@@ -573,7 +573,7 @@ async def test_model_reset_scope_is_validated(client, media_dir, monkeypatch, op
     previous = knowledge_store.begin_playback('cc_cycle3_week_4', 1)
     knowledge_store.update_playback(previous['session_id'], 'track_completed', 0)
 
-    async def generate(system_prompt, history, user_text):
+    async def generate(system_prompt, history, user_text, **kwargs):
         return {'reply_text': 'Here we go.', 'media_ids': ['cc_cycle3_week_3'],
                 'media_operation': operation, 'reset_playlist_ids': reset_ids}
 
@@ -582,3 +582,33 @@ async def test_model_reset_scope_is_validated(client, media_dir, monkeypatch, op
     assert response.status_code == 200
     assert knowledge_store.store.get_entity(previous['session_id']).properties['status'] == expected
     media.invalidate_playlist_cache()
+
+
+@pytest.mark.parametrize('choice', [
+    {'media_operation': 'stop'},
+    {'media_ids': ['bedtime'], 'media_operation': 'restart', 'reset_playlist_ids': ['sample']},
+    {'timer_seconds': 30},
+])
+async def test_telegram_capabilities_block_actions_before_state_changes(client, monkeypatch, choice):
+    from agent_server.modes import chat
+    from unittest.mock import Mock
+
+    async def generate(system_prompt, history, user_text, **kwargs):
+        assert 'Telegram text conversation' in system_prompt
+        return {'reply_text': 'I did it.', **choice}
+
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    stop = Mock(side_effect=AssertionError('Must not mutate playback'))
+    begin = Mock(side_effect=AssertionError('Must not begin playback'))
+    reset = Mock(side_effect=AssertionError('Must not reset playback'))
+    monkeypatch.setattr(knowledge_store, 'stop_active_playback', stop)
+    monkeypatch.setattr(knowledge_store, 'begin_playback', begin)
+    monkeypatch.setattr(knowledge_store, 'reset_playback', reset)
+    response = await client.post('/conversation', json={
+        'text': 'Sample device request', 'conversation_id': 'telegram:test', 'source': 'telegram'})
+    assert response.status_code == 200
+    assert response.json()['actions'] == []
+    assert "aren't available" in response.json()['reply_text']
+    stop.assert_not_called()
+    begin.assert_not_called()
+    reset.assert_not_called()

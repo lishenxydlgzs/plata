@@ -3,6 +3,9 @@
 ## Agent Server
 
 ### Implemented
+- [x] Telegram API onboarding — bot configuration, invitations, owner confirmation, status and revocation through the same REST API as the UI, with README walkthroughs
+- [x] Telegram household onboarding — guided bot setup, local QR invitations, expiring pairing and owner confirmation, account revocation, and first-conversation status
+- [x] Telegram text conversations — confirmed-account access, separate durable histories, shared-memory disclosure, restart-safe update handling and reply retries, and enforced text-only capabilities
 - [x] Agent-classified song metadata — cached batched LLM tags/topics/entities, graph associations, reviewable uncertainty, and retry without redownloading
 - [x] Curated CC playlist imports — classify titles by subject/cycle/week, review metadata in Jobs, and replace the legacy catalog while retaining backup audio
 - [x] Background jobs UI — manage quality improvement and playlist cadence, pause/run controls, persistent execution history and logs
@@ -99,6 +102,7 @@
 - [x] Knowledge review feature parity — graph visualization, filters, maintenance conversations, corrections, and action results
 - [x] Household management screens — people, guidance revisions, learning/behavior records, review updates, and memory settings
 - [x] Jobs feature parity — playlist imports, schedule/pause/run controls, history pagination, and execution logs
+- [x] Native conversation ontology search — read-only text/browse queries, multiple people, visible graph links, privacy filtering, and bounded tool/model rounds
 - [x] Strands voice orchestration — Gemini configuration/fallback and unchanged Home Assistant, media, playlist, and timer contracts
 - [x] Migration verification — backend regressions, frontend checks/build, AG-UI integration tests, and desktop/mobile browser checks
 - [x] Self-hosted frontend deployment — asset build/sync, private data preservation, setup and rollback documentation

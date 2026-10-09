@@ -343,3 +343,231 @@ The management API is `/api/jobs`, with `PUT /{id}` for interval/enabled setting
 `POST /{id}/run` to queue work, `GET /{id}/runs?before=RUN_ID` for history, and
 `GET /{id}/runs/{run_id}` for logs. Existing playlist APIs remain available.
 The legacy `/maintenance/run` endpoint also records history and rejects overlap.
+
+### Talk to Plata on Telegram
+
+You can establish the same connection through the **workspace UI** or **REST API**.
+Both paths use the same stored configuration, invitations, and account permissions;
+a connection created by a coding agent appears immediately in the UI.
+
+#### Option 1: workspace UI
+
+After building the workspace, open **Connections → Telegram** (or the Telegram
+card on the Logbook home page). The owner creates a dedicated bot through the
+linked official BotFather, pastes its token into the masked field, and chooses a
+household person to connect. No `.env` token, terminal command, public webhook,
+or router configuration is needed. Keep the home server online.
+
+Create an invitation, then open its link or scan its QR code and tap **Start** in
+Telegram. Return to the workspace to confirm the actual Telegram account. For a
+second family member, select or add their person profile and share a separate
+invitation; they never need the bot token or workspace access. Invitations expire
+in 15 minutes and can be used once. All account connections require confirmation.
+After a normal text message receives a reply, the workspace marks that account's
+first conversation complete.
+
+#### Option 2: REST API (coding agents and scripts)
+
+Run the server, then call its API from the trusted home network or through a
+private tunnel. No browser session or cookies are required. Every `/api/telegram`
+request needs `X-Plata-Workspace: 1`; JSON requests also need
+`Content-Type: application/json`. The workspace header is a CSRF/client-intent
+check, **not an authentication secret**. The API inherits the workspace's local
+network administrative access model and must not be exposed publicly. Non-browser
+clients can omit `Origin`; browser requests must still be same-origin.
+
+The household owner first creates a dedicated bot with the official
+[BotFather](https://t.me/BotFather). A coding agent can perform the following
+administrative steps on the owner's behalf. The recipient still needs to open
+the invitation and press **Start** in Telegram; the API does not bypass that step.
+
+**1. Configure the bot.** Set the base URL for your running server:
+
+```bash
+export PLATA_URL='http://127.0.0.1:8200'
+```
+
+Use the project's activated Python environment (which includes `httpx`). This
+example reads the token from a hidden terminal prompt or, for a non-interactive
+coding agent, an existing private token file selected by
+`PLATA_TELEGRAM_TOKEN_FILE`. Keep that file outside the repository with permissions
+`0600`. Do not put the actual token in shell commands, arguments, logs, or chat.
+
+```bash
+python - <<'PYTHON'
+import getpass
+import os
+from pathlib import Path
+import httpx
+
+secret_file = os.environ.get("PLATA_TELEGRAM_TOKEN_FILE")
+token = (Path(secret_file).read_text().strip() if secret_file
+         else getpass.getpass("Telegram bot token: "))
+response = httpx.put(
+    os.environ["PLATA_URL"].rstrip("/") + "/api/telegram/bot",
+    headers={"X-Plata-Workspace": "1"},
+    json={"token": token},
+    timeout=180,
+)
+response.raise_for_status()
+print(response.json())  # Configuration status; the bot token is never returned.
+PYTHON
+```
+
+A successful response has `configured: true` and the bot's `username`. Configuration
+validates the token and starts the connection automatically; no server restart is
+needed. Reusing the same bot preserves account links. Switching to another bot
+removes existing links and invitations, just as it does in the UI.
+
+**2. Select or create a household person.** Inspect existing profiles first to avoid
+creating duplicates:
+
+```bash
+curl --fail-with-body --silent --show-error "$PLATA_URL/api/people"
+```
+
+If the intended person is missing, create one and retain the returned `id`:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  -X POST "$PLATA_URL/api/people" \
+  -H 'Content-Type: application/json' \
+  --data '{"name":"Sample Person","aliases":[]}'
+```
+
+**3. Create an invitation.** Replace `PERSON_ID_FROM_RESPONSE` below with the actual
+profile ID. Acknowledge the shared-memory policy described below on the owner's
+behalf only when that policy is understood:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  -X POST "$PLATA_URL/api/telegram/invitations" \
+  -H 'X-Plata-Workspace: 1' \
+  -H 'Content-Type: application/json' \
+  --data '{"person_id":"PERSON_ID_FROM_RESPONSE","shared_memory_acknowledged":true}'
+```
+
+The response contains `id` (the invitation ID), `url` (the Telegram deep link), and
+`expires` (Unix seconds). Give the link to the intended person to open and tap
+**Start**. It is single-use and expires after 15 minutes. Creating a new invitation
+for the same profile replaces the old one. Store the link privately while needed;
+status deliberately does not return it again. If it is lost, create a new invitation.
+
+**4. Inspect and confirm the account.** Check status periodically, for example every
+3 seconds, while waiting for the recipient to press Start:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  "$PLATA_URL/api/telegram" -H 'X-Plata-Workspace: 1'
+```
+
+Find the invitation in `invitations` by its `id`. Its `state` moves from `waiting`
+to `pending`, and `user_id` and `label` identify the requesting Telegram account.
+An expired invitation reports `expired` and needs replacement. Compare `user_id`
+with the account ID the bot shows the recipient; a display name alone is not proof
+of identity. Once the owner has authorized connecting that account, an agent can
+confirm it directly through the API, without opening the workspace:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  -X POST "$PLATA_URL/api/telegram/invitations/INVITATION_ID_FROM_RESPONSE/approve" \
+  -H 'X-Plata-Workspace: 1'
+```
+
+This returns `{"ok":true}`, consumes the invitation, creates the account binding,
+and queues the welcome message. Approving before Start, after expiry, or after
+consumption returns an error. If the approval response is lost, inspect `accounts`
+in status before retrying; the account may already be connected.
+
+**5. Verify the first interaction.** Have the connected person send a normal text
+message to the bot. Poll the same status endpoint and inspect their entry in
+`accounts`: `first_reply` changes from `null` to a Unix timestamp after the full
+first reply is delivered. `error` reports transport problems, `last_poll` records
+the last successful Telegram poll, and `delivery_error` on an account explains a
+blocked or otherwise undeliverable reply. For a second household member, repeat
+steps 2–5 with a separate profile and invitation; reuse the existing bot.
+
+**API reference and cleanup.** Substitute returned IDs for path placeholders.
+JSON errors use FastAPI's `detail` field. Missing/cross-site workspace headers return
+403, invalid request bodies or an unacknowledged sharing policy return 422, and
+invalid tokens, unavailable profiles, or invalid approvals return 400. A configured
+bot can still have a transport error; inspect status instead of treating
+`configured` as proof of a working connection.
+
+| Method and path | Body / result |
+| --- | --- |
+| `GET /api/people` | List profiles and their IDs. |
+| `POST /api/people` | `{"name":"Sample Person","aliases":[]}` → created profile. |
+| `PUT /api/telegram/bot` | `{"token":"BOT_TOKEN"}` → token-free connection status. |
+| `GET /api/telegram` | Configuration, errors, memory notice, invitations, and accounts. |
+| `POST /api/telegram/invitations` | `{"person_id":"PERSON_ID","shared_memory_acknowledged":true}` → `id`, `url`, `expires`. |
+| `POST /api/telegram/invitations/{id}/approve` | No body → `{"ok":true}`. |
+| `DELETE /api/telegram/invitations/{id}` | Cancel an unused invitation or reject a pending request. |
+| `DELETE /api/telegram/accounts/{user_id}` | Revoke an account and clear its queued work/output. |
+| `DELETE /api/telegram/bot` | Disconnect the bot and remove all bindings/invitations. |
+| `POST /api/telegram/qr` | `{"url":"INVITATION_URL"}` → locally generated SVG, not JSON. |
+
+For example, revoke one account while leaving the household bot connected:
+
+```bash
+curl --fail-with-body --silent --show-error \
+  -X DELETE "$PLATA_URL/api/telegram/accounts/TELEGRAM_USER_ID_FROM_STATUS" \
+  -H 'X-Plata-Workspace: 1'
+```
+
+Use these endpoints rather than editing SQLite or running a second Telegram
+`getUpdates` consumer, which would conflict with Plata's poller. API-created
+connections have the same privacy, retry, and revocation behavior as UI-created
+connections. Disconnecting does not erase existing household memories.
+
+#### Shared behavior, privacy, and recovery
+
+Each account has its own chat history. Messages and extracted facts/events can
+enter shared household memory and appear in the household workspace. This is
+**not private journal storage**. The setup and bot welcome explain this before
+conversation. `/help` repeats these details; `/new` starts fresh chat history while
+retaining shared memory; `/disconnect` revokes Telegram access. Voice messages,
+timers, and home-device control are not supported in this initial version.
+
+The settings page inherits the existing trusted local-network workspace access
+model; do not expose it publicly. Tokens and transport state persist in
+`DB_DIR/telegram/state.db` (mode 0600, enclosing directory 0700), excluded from Git
+and deployment sync. A process lock enforces one server worker. The token is
+never returned by the settings API or included in application HTTP request logs.
+QR codes are generated locally. Back up this state only as private operational
+data. Disconnecting an account or bot does not delete existing shared memory.
+
+Connection errors appear on the settings page. An expired invitation needs a new
+link; an unconfirmed account needs owner confirmation; a blocked bot needs to be
+unblocked in Telegram. A bot already used by another webhook must be disconnected
+there first, or replaced with a dedicated bot. Updating the token for the same bot
+preserves accounts; switching bots removes old account links and invitations.
+Telegram responses may take up to one long-poll interval (20 seconds) after owner
+approval. Temporary delivery errors are retried without repeating agent work;
+a network failure after Telegram accepted a reply can produce a duplicate reply.
+
+See [the Telegram onboarding design](dev-docs/design/telegram-onboarding.md) for
+state transitions, authorization boundaries, and verification coverage.
+
+### Conversation ontology search
+
+Robot and Telegram conversations expose a read-only native Strands tool,
+`search_ontology`. The agent can search by text, browse record types, look across
+multiple people, and follow returned graph links. For questions such as “What
+could our children practice?”, instructions tell the agent to retrieve household
+evidence before answering and distinguish reports from verified facts.
+
+Search includes shared facts, people, learning and behavior events, guidance,
+catalog records, and current family-visible notes. Parent-only notes, archived
+notes, raw conversations, and superseded revisions are excluded; memory settings
+still apply. Connecting a parent through Telegram does not grant access to
+parent-only notes.
+
+Search runs locally without a separate Gemini request. Returning tool results
+to the model requires another model round: one search followed by an answer
+normally uses two Gemini requests. Each user turn permits up to six searches and
+four model rounds; model fallback attempts may add requests. Results are paginated
+and text fields are bounded excerpts. Search uses literal terms, not semantic
+embeddings; the agent can browse filtered records when wording differs.
+
+See [the ontology search design](dev-docs/design/ontology-conversation-search.md).

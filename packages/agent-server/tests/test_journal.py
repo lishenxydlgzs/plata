@@ -84,8 +84,8 @@ async def test_api_saved_failure_and_conversation_privacy(monkeypatch):
     model=AsyncMock(return_value=note())
     monkeypatch.setattr('agent_server.journal.generate_chat_json',model)
     prompts=[]
-    async def reply(prompt,history,text):
-        prompts.append(prompt)
+    async def reply(prompt,history,text, **kwargs):
+        prompts.append(json.dumps(await kwargs["tools"][0](query="books", entity_types=["journal"])))
         return {'reply_text':'Thanks for sharing.', 'topics':[], 'facts':[]}
     monkeypatch.setattr('agent_server.modes.chat.generate_chat_json',reply)
     async with AsyncClient(transport=ASGITransport(app=app),base_url='http://test') as c:

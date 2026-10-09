@@ -118,15 +118,13 @@ async def test_alphabet_history_is_retrieved_before_encouragement(store, monkeyp
     record(store, child_name="Other Child", summary="Must not appear in retrieved context")
     calls = []
 
-    async def generate(prompt, history, text):
+    async def generate(prompt, history, text, **kwargs):
         calls.append(prompt)
         assert text == "I am Dad. Sample Child remembers H to K today."
-        if len(calls) == 1:
-            assert "Practiced A to H" not in prompt
-            return {"memory_query": {"person_id": prior["person_id"], "kind": "learning_event", "topic": "alphabet"}}
-        retrieved = prompt.split("Retrieved household memory:\n")[1].split("\nLookup is complete.")[0]
-        assert json.loads(retrieved)["events"][0]["material"] == "A to H"
-        assert "Must not appear" not in retrieved
+        assert "Practiced A to H" not in prompt
+        retrieved = await kwargs["tools"][0](query="alphabet", entity_types=["learning_event"], person_ids=[prior["person_id"]])
+        assert retrieved["records"][0]["properties"]["material"] == "A to H"
+        assert "Must not appear" not in json.dumps(retrieved)
         return {"reply_text": "Great job! You practiced A to H, and now you remember H to K!",
                 "learning_events": [{"person_id": prior["person_id"], "child_name": "Sample Child",
                                      "summary": "Recalled H to K", "topic": "alphabet", "material": "H to K",
@@ -136,7 +134,7 @@ async def test_alphabet_history_is_retrieved_before_encouragement(store, monkeyp
     reply = await chat.ChatHandler(store).handle(ConversationRequest(
         text="I am Dad. Sample Child remembers H to K today.", conversation_id="today"), [])
     assert reply.reply_text.startswith("Great job!")
-    assert len(calls) == 2
+    assert len(calls) == 1
     events = store.get_events("learning_event", prior["person_id"], "alphabet")
     assert [e["outcome"] for e in events] == ["recalled", "practiced"]
 
@@ -145,12 +143,10 @@ async def test_lookup_failure_saves_no_draft_events(store, monkeypatch):
     prior = record(store)
     calls = 0
 
-    async def generate(prompt, history, text):
+    async def generate(prompt, history, text, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 1:
-            return {"reply_text": "Draft", "memory_query": {"person_id": prior["person_id"], "kind": "learning_event", "topic": "alphabet"},
-                    "learning_events": [{"child_name": "Sample Child", "summary": "Should not save", "topic": "alphabet", "material": "A to Z", "outcome": "mastered"}]}
+        assert (await kwargs["tools"][0](entity_types=["learning_event"]))["records"]
         raise RuntimeError("LLM unavailable")
 
     monkeypatch.setattr(chat, "generate_chat_json", generate)
@@ -205,7 +201,7 @@ async def test_lesson_start_then_pronoun_progress_over_api(client, store, monkey
     followup = "She remembers H to K now."
     calls = []
 
-    async def generate(prompt, history, text):
+    async def generate(prompt, history, text, **kwargs):
         calls.append(text)
         if text == first_text:
             return {"reply_text": "Have fun learning your letters, Sample Child!",
@@ -213,9 +209,8 @@ async def test_lesson_start_then_pronoun_progress_over_api(client, store, monkey
                                          "topic": "alphabet", "material": "alphabet", "outcome": "started", "reporter_claim": "Dad"}]}
         assert first_text in [m["text"] for m in history]
         person = store.get_people()[0]
-        if "Retrieved household memory:" not in prompt:
-            return {"memory_query": {"person_id": person["id"], "kind": "learning_event", "topic": "alphabet"}}
-        assert '"same_conversation": true' in prompt
+        records = (await kwargs["tools"][0](entity_types=["learning_event"], person_ids=[person["id"]]))["records"]
+        assert records[0]["properties"]["outcome"] == "started"
         return {"reply_text": "Great job remembering H to K, Sample Child!",
                 "learning_events": [{"person_id": person["id"], "child_name": "Sample Child", "summary": "Recalled H to K",
                                      "topic": "alphabet", "material": "H to K", "outcome": "recalled", "reporter_claim": "Dad"}]}
@@ -227,18 +222,18 @@ async def test_lesson_start_then_pronoun_progress_over_api(client, store, monkey
     events = (await client.get("/api/learning-events")).json()
     assert len(events) == 2
     assert events[0]["session_id"] == events[1]["id"]
-    assert len(calls) == 3
+    assert len(calls) == 2
 
 
-async def test_invalid_lookup_cannot_save_events(client, store, monkeypatch):
+async def test_unknown_search_identity_returns_no_records(client, store, monkeypatch):
     calls = 0
 
-    async def generate(prompt, history, text):
+    async def generate(prompt, history, text, **kwargs):
         nonlocal calls
         calls += 1
-        if calls == 1:
-            return {"memory_query": {"person_id": "nonexistent", "kind": "learning_event", "topic": "alphabet"}}
-        return {"reply_text": "Which child do you mean?", "behavior_events": [{"child_name": "Guessed Child", "summary": "Guessed event"}]}
+        assert (await kwargs["tools"][0](person_ids=["nonexistent"]))["records"] == []
+        return {"reply_text": "Which child do you mean?", "behavior_events": []}
+
 
     monkeypatch.setattr(chat, "generate_chat_json", generate)
     response = await client.post("/conversation", json={"text": "She did well", "conversation_id": "unknown"})

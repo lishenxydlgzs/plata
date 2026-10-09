@@ -18,6 +18,7 @@ class ConversationRequest(BaseModel):
     conversation_id: str
     language: str = "en"
     source: str = "assist"
+    person_id: str | None = None
     device_id: str | None = None
     satellite_id: str | None = None
     timestamp: datetime = Field(default_factory=datetime.now)
