@@ -102,7 +102,7 @@ def make_agent(prompt, tools=(), *, model=None, hooks=()):
 
 
 async def generate_chat_json(system_prompt, conversation_history, user_text, *,
-                             timeout_seconds=None, max_output_tokens=1536, temperature=0.7, tools=()):
+                             timeout_seconds=None, max_output_tokens=1536, temperature=0.7, tools=(), log_response_on_error=False):
     """Run a bounded structured Strands turn for voice and domain services.
 
     Device and memory effects stay in validated domain services, after complete
@@ -121,7 +121,15 @@ async def generate_chat_json(system_prompt, conversation_history, user_text, *,
     text = str(result).strip()
     if text.startswith("```json\n") and text.endswith("\n```"):
         text = text[len("```json\n"):-len("\n```")]
-    value = json.loads(text)
-    if not isinstance(value, dict):
-        raise ValueError('The agent returned an invalid structured response.')
+    try:
+        value = json.loads(text)
+        if not isinstance(value, dict):
+            raise ValueError(
+                f'The agent returned an invalid structured response: expected object, got {type(value).__name__}.')
+    except ValueError as exc:
+        logger.error('Structured response rejected: model=%s stop_reason=%s response_chars=%d error=%s',
+                     model.config.get('model_id'), getattr(result, 'stop_reason', None), len(text), exc)
+        if log_response_on_error:
+            logger.error('Rejected response excerpt (first 1000 chars): %s', json.dumps(text[:1000], ensure_ascii=True))
+        raise
     return value

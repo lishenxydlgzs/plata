@@ -103,12 +103,19 @@ async def classify_tracks(tracks: list[dict], playlist_title: str, vocabulary: d
     result = await generate_chat_json(
         CLASSIFICATION_PROMPT + '\nOutput schema:\n' + json.dumps(ClassificationBatch.model_json_schema()),
         [], json.dumps({'playlist_title': playlist_title, 'tracks': tracks, 'existing_vocabulary': vocabulary}, ensure_ascii=False),
-        max_output_tokens=6144, timeout_seconds=45, temperature=0,
+        max_output_tokens=6144, timeout_seconds=45, temperature=0, log_response_on_error=True,
     )
-    batch = ClassificationBatch.model_validate(result)
-    ids = [track.video_id for track in batch.tracks]
-    if len(ids) != len(set(ids)) or set(ids) != {track['video_id'] for track in tracks}:
-        raise ValueError('Classification must return each requested video ID exactly once')
+    try:
+        batch = ClassificationBatch.model_validate(result)
+        ids = [track.video_id for track in batch.tracks]
+        if len(ids) != len(set(ids)) or set(ids) != {track['video_id'] for track in tracks}:
+            raise ValueError('Classification must return each requested video ID exactly once')
+    except ValueError as exc:
+        logger.error('Classification validation failed for video_ids=%s: %s',
+                     [track['video_id'] for track in tracks], str(exc)[:1000])
+        logger.error('Rejected classification excerpt (first 1000 chars): %s',
+                     json.dumps(json.dumps(result, ensure_ascii=True)[:1000]))
+        raise
     return {track.video_id: track.model_dump() for track in batch.tracks}
 
 

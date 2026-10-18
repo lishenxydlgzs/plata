@@ -3,6 +3,7 @@
 ## Agent Server
 
 ### Implemented
+- [x] Classification failure diagnostics — persistent job logs include parsing/type/schema errors, model context, and bounded rejected response excerpts without conversation history
 - [x] Main-only production deployment — deploy and source sync require the primary checkout on main after worktree changes are committed and merged
 - [x] Ontology-owned media catalog — unified song/playlist entity IDs, ordered membership, classification and availability, with one-time manifest migration and preserved playback progress
 - [x] Media catalog search — agent tool discovers songs and playlists, inspects membership, and selects imported or unclassified songs individually

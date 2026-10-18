@@ -115,3 +115,19 @@ async def test_home_assistant_contract_through_real_strands(monkeypatch, reply, 
         assert len(history) == 2
     finally:
         knowledge_store.store._db.close(); await conversation_db.close()
+
+
+@pytest.mark.parametrize('reply,error', [('[]', 'expected object, got list'), ('{"tracks":', 'Expecting value')])
+@pytest.mark.parametrize('diagnostics', [False, True])
+async def test_rejected_response_diagnostics(monkeypatch, caplog, reply, error, diagnostics):
+    async def generate(request):
+        yield chunk(reply)
+    fake_client(monkeypatch, generate)
+    with pytest.raises(ValueError):
+        await agent_runtime.generate_chat_json('private system', [], 'private user',
+                                               log_response_on_error=diagnostics)
+    assert error in caplog.text
+    assert 'model=primary' in caplog.text
+    assert ('Rejected response excerpt' in caplog.text) is diagnostics
+    assert 'private system' not in caplog.text
+    assert 'private user' not in caplog.text

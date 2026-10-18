@@ -188,7 +188,7 @@ class PlaylistSync:
         self._active = True
         run_id = self.history.begin(job["id"], trigger or job.get("queued_trigger", "scheduled"))
         token = active_run.set((self.history, run_id))
-        loggers = [logger, logging.getLogger("agent_server.maintenance"), logging.getLogger("agent_server.cc_catalog")]
+        loggers = [logger, logging.getLogger("agent_server.maintenance"), logging.getLogger("agent_server.cc_catalog"), logging.getLogger("agent_server.agent_runtime")]
         for target in loggers:
             target.addHandler(self.history)
         with self.db:
