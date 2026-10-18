@@ -7,6 +7,7 @@ from ..knowledge import KnowledgeStore
 from ..agent_runtime import generate_chat_json
 from ..ontology_search import search_tool
 from ..media_search import media_search_tool
+from ..telegram_music import telegram_music_tools
 from ..media import (
     media_play_response,
     media_playlist_response,
@@ -209,6 +210,11 @@ class ChatHandler:
             system_prompt += (
                 "\nThis is a Telegram text conversation with a household member. "
                 "Adapt to their request and age; do not assume the speaker is a child. "
+                "When send_music is available, use search_media to find songs or playlists "
+                "and send_music to deliver requested music files to this chat. Ask for clarification "
+                "when the selection is ambiguous. A playlist ID sends its complete saved order. "
+                "Report queued delivery and any skipped tracks accurately; queued does not mean delivered. "
+                "Do not claim file delivery if send_music is unavailable or returns an error. "
                 "This channel cannot play or stop media, set timers, control home devices, "
                 "or reset playback progress. Explain this naturally when relevant and never "
                 "claim to have performed those actions. Return empty media_ids and "
@@ -230,7 +236,8 @@ class ChatHandler:
 
         try:
             result = await generate_chat_json(
-                system_prompt, history, request.text, tools=[search_tool(self._knowledge), media_search_tool(self._knowledge)])
+                system_prompt, history, request.text, tools=[search_tool(self._knowledge), media_search_tool(self._knowledge),
+                       *telegram_music_tools(request)])
         except Exception:
             logger.exception("LLM generation failed")
             return ConversationResponse(

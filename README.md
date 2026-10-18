@@ -527,7 +527,18 @@ enter shared household memory and appear in the household workspace. This is
 **not private journal storage**. The setup and bot welcome explain this before
 conversation. `/help` repeats these details; `/new` starts fresh chat history while
 retaining shared memory; `/disconnect` revokes Telegram access. Voice messages,
-timers, and home-device control are not supported in this initial version.
+timers, and home-device control are not supported through Telegram.
+
+Ask “Send me Sample Song” or “Send me the Sample Playlist” to receive existing
+library music as playable audio attachments. Plata can send MP3/M4A tracks up to
+50 MB each, preserving playlist order and splitting playlists into batches of up
+to ten tracks (up to 200 tracks per tool call). Missing, hidden, unsupported, or
+oversized files are reported as skipped; no conversion or external download is
+performed. Music is sent only to the requesting paired chat. Robot conversations
+cannot access the upload tool, and sending music does not change robot playback.
+Queued delivery survives server restarts; disconnecting cancels pending uploads.
+A timeout after Telegram accepts an upload can duplicate the current batch when
+retried. See [the music delivery design](dev-docs/design/telegram-music-delivery.md).
 
 The settings page inherits the existing trusted local-network workspace access
 model; do not expose it publicly. Tokens and transport state persist in

@@ -4,6 +4,7 @@ import asyncio
 import contextlib
 import hashlib
 import io
+import json
 import logging
 import os
 from pathlib import Path
@@ -19,12 +20,13 @@ from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel, Field, SecretStr
 
 from .models import ConversationRequest
+from .telegram_music import TelegramMusicContext, music_context, resolve_tracks, audio_file, MusicSelection
 
 MEMORY_NOTICE = (
     "Your chat history is separate from other household members' chats. Messages, "
     "facts, and reported learning or behavior may be saved in shared household memory "
     "and visible in the household workspace. This is not a private journal. "
-    "Telegram also carries these messages. Text chat is supported; voice, timers, "
+    "Telegram also carries these messages. Text chat and library music delivery are supported; voice, timers, "
     "and home-device control are not available here."
 )
 WELCOME = ("You're connected to Plata. " + MEMORY_NOTICE + "\n\n"
@@ -49,9 +51,13 @@ class TelegramAPI:
         logging.getLogger("httpcore").setLevel(logging.WARNING)
         self.client = httpx.AsyncClient(timeout=40)
 
-    async def call(self, token, method, **payload):
+    async def call(self, token, method, *, files=None, **payload):
         try:
-            response = await self.client.post(f"https://api.telegram.org/bot{token}/{method}", json=payload)
+            request = {"json": payload} if files is None else {
+                "data": {k: json.dumps(v) if isinstance(v, (dict, list)) else str(v) for k, v in payload.items()},
+                "files": files, "timeout": 180,
+            }
+            response = await self.client.post(f"https://api.telegram.org/bot{token}/{method}", **request)
             data = response.json()
         except (httpx.HTTPError, ValueError):
             raise TelegramError("Cannot reach Telegram. Check the server's Internet connection; retrying automatically.") from None
@@ -138,6 +144,17 @@ class TelegramService:
             CREATE TABLE IF NOT EXISTS outbox (id INTEGER PRIMARY KEY AUTOINCREMENT, chat_id INTEGER NOT NULL,
                 text TEXT NOT NULL, first_reply INTEGER NOT NULL DEFAULT 0);
         ''')
+        # Additive upgrades preserve existing pairings and pending text replies.
+        for table, column, declaration in (
+            ('accounts', 'grant_id', "TEXT NOT NULL DEFAULT ''"),
+            ('outbox', 'audio', 'TEXT'), ('outbox', 'grant_id', 'TEXT'),
+            ('outbox', 'delivery_key', 'TEXT'),
+        ):
+            if column not in {row[1] for row in self.db.execute(f'PRAGMA table_info({table})')}:
+                self.db.execute(f'ALTER TABLE {table} ADD COLUMN {column} {declaration}')
+        for row in self.db.execute("SELECT user_id FROM accounts WHERE grant_id='' ").fetchall():
+            self.db.execute('UPDATE accounts SET grant_id=? WHERE user_id=?', (uuid.uuid4().hex, row['user_id']))
+        self.db.execute("CREATE TABLE IF NOT EXISTS music_requests (delivery_key TEXT PRIMARY KEY, grant_id TEXT NOT NULL, result TEXT NOT NULL)")
         self.db.commit()
 
     def config(self):
@@ -223,7 +240,7 @@ class TelegramService:
         return self.status()
 
     def clear_bindings(self):
-        for table in ("invites", "accounts", "inbox", "outbox"):
+        for table in ("invites", "accounts", "inbox", "outbox", "music_requests"):
             self.db.execute(f"DELETE FROM {table}")
 
     async def disconnect_bot(self):
@@ -264,8 +281,8 @@ class TelegramService:
         if not any(p["id"] == row["person_id"] for p in self.knowledge.get_people()):
             raise ValueError("This household person no longer exists.")
         try:
-            self.db.execute("INSERT INTO accounts(user_id,chat_id,person_id,label,conversation_id) VALUES(?,?,?,?,?)",
-                            (row["user_id"], row["chat_id"], row["person_id"], row["label"], f"telegram:{uuid.uuid4().hex}"))
+            self.db.execute("INSERT INTO accounts(user_id,chat_id,person_id,label,conversation_id,grant_id) VALUES(?,?,?,?,?,?)",
+                            (row["user_id"], row["chat_id"], row["person_id"], row["label"], f"telegram:{uuid.uuid4().hex}", uuid.uuid4().hex))
         except sqlite3.IntegrityError:
             raise ValueError("This Telegram account or household person is already connected.") from None
         self.db.execute("DELETE FROM invites WHERE id=?", (id,))
@@ -273,6 +290,7 @@ class TelegramService:
         self.db.commit()
 
     def revoke(self, user_id):
+        self.db.execute("DELETE FROM music_requests WHERE grant_id IN (SELECT grant_id FROM accounts WHERE user_id=?)", (user_id,))
         rows = self.db.execute("SELECT chat_id FROM accounts WHERE user_id=? UNION SELECT chat_id FROM invites WHERE user_id=?", (user_id, user_id)).fetchall()
         for row in rows:
             self.db.execute("DELETE FROM outbox WHERE chat_id=?", (row["chat_id"],))
@@ -326,9 +344,15 @@ class TelegramService:
         elif len(text) > 12000:
             self.queue(chat_id, "Please send a shorter message (up to 12,000 characters).")
         else:
-            response = await self.router.route(ConversationRequest(
-                text=text, conversation_id=account["conversation_id"], source="telegram",
-                person_id=account["person_id"], language=sender.get("language_code", "en")))
+            context = TelegramMusicContext(self, user_id, chat_id, account['person_id'],
+                                           account['conversation_id'], account['grant_id'], update['update_id'])
+            binding = music_context.set(context)
+            try:
+                response = await self.router.route(ConversationRequest(
+                    text=text, conversation_id=account["conversation_id"], source="telegram",
+                    person_id=account["person_id"], language=sender.get("language_code", "en")))
+            finally:
+                music_context.reset(binding)
             self.queue(chat_id, response.reply_text, first_reply=True)
 
     def ingest(self, updates):
@@ -363,15 +387,76 @@ class TelegramService:
         self.db.execute("DELETE FROM inbox WHERE state='done' AND update_id < (SELECT offset-1000 FROM config WHERE id=1)")
         self.db.commit()
 
+    def queue_music(self, context, media_ids):
+        if music_context.get() is not context or context.service is not self:
+            raise ValueError('Missing Telegram authority.')
+        account = self.db.execute(
+            "SELECT * FROM accounts WHERE user_id=? AND chat_id=? AND grant_id=? AND person_id=? AND conversation_id=?",
+            (context.user_id, context.chat_id, context.grant_id, context.person_id, context.conversation_id)).fetchone()
+        if not account or not self.config():
+            raise ValueError('Telegram account is no longer authorized.')
+        MusicSelection(media_ids=media_ids)
+        # Deduplicate identical calls even after successful delivery of the jobs.
+        key = hashlib.sha256(json.dumps([context.grant_id, context.update_id, media_ids]).encode()).hexdigest()
+        previous = self.db.execute('SELECT result FROM music_requests WHERE delivery_key=?', (key,)).fetchone()
+        if previous:
+            return json.loads(previous['result'])
+        tracks, skipped = resolve_tracks(self.knowledge.media_catalog, media_ids)
+        if not tracks:
+            return {'error': 'No sendable tracks in this selection.', 'skipped': skipped}
+        result = {'status': 'queued', 'track_count': len(tracks), 'skipped': skipped,
+                  'note': 'Delivery is queued, not yet confirmed by Telegram.'}
+        with self.db:
+            for offset in range(0, len(tracks), 10):
+                batch = tracks[offset:offset + 10]
+                caption = 'Music · tracks %d–%d of %d\n' % (offset + 1, offset + len(batch), len(tracks))
+                caption += '\n'.join(f"{offset + i + 1}. {t['title'][:35]}" for i, t in enumerate(batch))
+                self.db.execute('INSERT INTO outbox(chat_id,text,audio,grant_id,delivery_key) VALUES(?,?,?,?,?)',
+                    (context.chat_id, caption, json.dumps(batch), context.grant_id, key))
+            self.db.execute('INSERT INTO music_requests VALUES(?,?,?)', (key, context.grant_id, json.dumps(result)))
+        return result
+
+    async def upload_batch(self, config, row):
+        tracks = json.loads(row['audio'])
+        catalog = self.knowledge.media_catalog
+        with contextlib.ExitStack() as stack:
+            files, items = {}, []
+            for index, track in enumerate(tracks):
+                try:
+                    path = audio_file(catalog, catalog.store.get_entity(track['id']))
+                    handle = stack.enter_context(path.open('rb'))
+                except (ValueError, OSError, KeyError, TypeError):
+                    raise TelegramError('A queued music file is no longer available or supported. Request the playlist again.', permanent=True) from None
+                name = f'audio{index}'
+                files[name] = (path.name, handle, 'audio/mpeg' if path.suffix.lower() == '.mp3' else 'audio/mp4')
+                items.append({'type': 'audio', 'media': f'attach://{name}', 'title': track['title']})
+            if len(items) == 1:
+                return await self.api.call(config['token'], 'sendAudio', chat_id=row['chat_id'],
+                    audio='attach://audio0', title=tracks[0]['title'], caption=row['text'], files=files)
+            items[0]['caption'] = row['text']
+            return await self.api.call(config['token'], 'sendMediaGroup', chat_id=row['chat_id'], media=items, files=files)
+
     async def flush(self):
         config = self.config()
+        if not config:
+            return
         for row in self.db.execute("SELECT * FROM outbox ORDER BY id").fetchall():
+            if row['audio'] and not self.db.execute(
+                    'SELECT 1 FROM accounts WHERE chat_id=? AND grant_id=?', (row['chat_id'], row['grant_id'])).fetchone():
+                self.db.execute('DELETE FROM outbox WHERE id=?', (row['id'],))
+                self.db.commit()
+                continue
             try:
-                await self.api.call(config["token"], "sendMessage", chat_id=row["chat_id"], text=row["text"])
+                if row['audio']:
+                    await self.upload_batch(config, row)
+                else:
+                    await self.api.call(config["token"], "sendMessage", chat_id=row["chat_id"], text=row["text"])
             except TelegramError as error:
                 if not error.permanent:
                     raise
                 self.db.execute("UPDATE accounts SET delivery_error=? WHERE chat_id=?", (str(error), row["chat_id"]))
+                if row['audio']:
+                    self.queue(row['chat_id'], 'Some requested music could not be delivered. ' + str(error))
             else:
                 self.db.execute("UPDATE accounts SET delivery_error=NULL,first_reply=CASE WHEN ? THEN COALESCE(first_reply,?) ELSE first_reply END WHERE chat_id=?",
                                 (row["first_reply"], time.time(), row["chat_id"]))

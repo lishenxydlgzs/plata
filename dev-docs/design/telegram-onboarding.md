@@ -77,7 +77,9 @@ Agent instructions describe the text channel and the verified sender profile.
 Executor validation blocks playback/timer output and state changes for Telegram,
 independently of model interpretation. Natural messages always go to the agent;
 only explicit transport commands (/start, /help, /new, /disconnect) are handled by
-the adapter. Telegram output is plain text, chunked within its UTF-16 length limit.
+the adapter. Text replies are chunked within their UTF-16 length limit. The later
+[Telegram music delivery design](telegram-music-delivery.md) adds a channel-only
+file delivery tool while preserving the playback/timer boundary.
 
 ## Validation and rollout
 

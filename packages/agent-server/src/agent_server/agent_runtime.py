@@ -108,6 +108,8 @@ async def generate_chat_json(system_prompt, conversation_history, user_text, *,
 
     Device and memory effects stay in validated domain services, after complete
     JSON output. No partial model response or failed attempt can execute them.
+    Channel tools may queue authorized delivery during the turn; their durable
+    effects are not rolled back if final JSON generation fails.
     """
     if response_schema is not None and tools:
         raise ValueError("Response schemas require a structured turn without tools.")
@@ -115,7 +117,7 @@ async def generate_chat_json(system_prompt, conversation_history, user_text, *,
         max_output_tokens=max_output_tokens, buffered=True, json_output=not bool(tools),
         temperature=temperature, response_schema=response_schema)
     if tools:
-        system_prompt += "\nUse the available read-only tools as needed. After tool use, return ONLY the final JSON object in the documented response format, without markdown."
+        system_prompt += "\nUse the available tools as needed. After tool use, return ONLY the final JSON object in the documented response format, without markdown."
     agent = make_agent(system_prompt, tools=tools, model=model,
                        hooks=[ModelCallLimit(maximum=4 if tools else 1)])
     agent.messages = [{'role': 'user' if m['role'] == 'user' else 'assistant',
