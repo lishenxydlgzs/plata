@@ -186,3 +186,17 @@ async def test_error_with_matching_fingerprint_still_retries(library):
     await enrich(store, folder)
     assert len(calls) == 2
     assert track(store)['classification_status'] == 'ready'
+
+
+async def test_classification_supplies_provider_response_schema(library, monkeypatch):
+    store, folder, calls, answer = library
+    original = cc.generate_chat_json
+
+    async def generate(*args, **kwargs):
+        assert kwargs['response_schema'] == cc.ClassificationBatch.model_json_schema()
+        assert 'top-level value must be an object' in args[0]
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(cc, 'generate_chat_json', generate)
+    assert await enrich(store, folder) == []
+    assert track(store)['classification_status'] == 'ready'

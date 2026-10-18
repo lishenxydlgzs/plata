@@ -17,13 +17,14 @@ logger = logging.getLogger(__name__)
 class FallbackGeminiModel(GeminiModel):
     """Retry model calls before visible output, never replay an agent/tool run."""
 
-    def __init__(self, *, timeout_seconds=None, max_output_tokens=4096, buffered=False, json_output=False, temperature=0.7):
+    def __init__(self, *, timeout_seconds=None, max_output_tokens=4096, buffered=False, json_output=False, temperature=0.7, response_schema=None):
         self.models = get_models()
         self.buffered = buffered
         self.timeout_seconds = timeout_seconds or get_model_timeout_seconds()
         super().__init__(client=get_client(), model_id=self.models[0],
                          params={"max_output_tokens": max_output_tokens, "temperature": temperature,
-                                 **({"response_mime_type": "application/json"} if json_output else {})})
+                                 **({"response_mime_type": "application/json"} if json_output else {}),
+                                 **({"response_json_schema": response_schema} if response_schema is not None else {})})
 
     async def stream(self, *args, **kwargs):
         for index, model_id in enumerate(self.models):
@@ -102,15 +103,17 @@ def make_agent(prompt, tools=(), *, model=None, hooks=()):
 
 
 async def generate_chat_json(system_prompt, conversation_history, user_text, *,
-                             timeout_seconds=None, max_output_tokens=1536, temperature=0.7, tools=(), log_response_on_error=False):
+                             timeout_seconds=None, max_output_tokens=1536, temperature=0.7, tools=(), log_response_on_error=False, response_schema=None):
     """Run a bounded structured Strands turn for voice and domain services.
 
     Device and memory effects stay in validated domain services, after complete
     JSON output. No partial model response or failed attempt can execute them.
     """
+    if response_schema is not None and tools:
+        raise ValueError("Response schemas require a structured turn without tools.")
     model = FallbackGeminiModel(timeout_seconds=timeout_seconds,
         max_output_tokens=max_output_tokens, buffered=True, json_output=not bool(tools),
-        temperature=temperature)
+        temperature=temperature, response_schema=response_schema)
     if tools:
         system_prompt += "\nUse the available read-only tools as needed. After tool use, return ONLY the final JSON object in the documented response format, without markdown."
     agent = make_agent(system_prompt, tools=tools, model=model,

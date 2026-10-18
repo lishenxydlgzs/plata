@@ -131,3 +131,28 @@ async def test_rejected_response_diagnostics(monkeypatch, caplog, reply, error, 
     assert ('Rejected response excerpt' in caplog.text) is diagnostics
     assert 'private system' not in caplog.text
     assert 'private user' not in caplog.text
+
+
+async def test_response_schema_reaches_provider_and_survives_fallback(monkeypatch):
+    from agent_server.cc_catalog import ClassificationBatch
+    schema = ClassificationBatch.model_json_schema()
+
+    async def generate(request):
+        assert request['config']['response_json_schema'] == schema
+        assert request['config']['response_mime_type'] == 'application/json'
+        if request['model'] == 'primary':
+            raise errors.ServerError(503, {'error': {'message': 'temporarily unavailable'}})
+        yield chunk('{"tracks": []}')
+
+    calls = fake_client(monkeypatch, generate)
+    assert await agent_runtime.generate_chat_json('system', [], 'Sample', response_schema=schema) == {'tracks': []}
+    assert [c['model'] for c in calls] == ['primary', 'fallback']
+
+
+async def test_schema_with_tools_rejected_before_call(monkeypatch):
+    def unexpected(*args, **kwargs):
+        pytest.fail('No model call should be made')
+    monkeypatch.setattr(agent_runtime, 'get_client', unexpected)
+    with pytest.raises(ValueError, match='without tools'):
+        await agent_runtime.generate_chat_json('system', [], 'Sample', tools=[object()],
+                                               response_schema={'type': 'object'})
