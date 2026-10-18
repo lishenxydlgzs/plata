@@ -7,6 +7,7 @@ from httpx import ASGITransport, AsyncClient
 from pydantic import ValidationError
 
 from agent_server import media, playlist_sync as module
+from .catalog_helpers import catalog_view
 from agent_server.playlist_sync import NewSyncJob, PlaylistSync, SyncSettings, sync_router
 
 URL = 'https://www.youtube.com/playlist?list=PL_sample_playlist'
@@ -15,12 +16,10 @@ URL = 'https://www.youtube.com/playlist?list=PL_sample_playlist'
 @pytest.fixture
 def service(tmp_path, monkeypatch):
     monkeypatch.setattr(media, 'MEDIA_DIR', tmp_path / 'media')
-    media.invalidate_playlist_cache()
     service = PlaylistSync(tmp_path / 'jobs.sqlite3')
     service.connect()
     yield service
     service.db.close()
-    media.invalidate_playlist_cache()
 
 
 def add(service):
@@ -71,18 +70,18 @@ async def test_incremental_import_failure_retry_and_catalog(service, monkeypatch
         return ''
 
     monkeypatch.setattr(module, 'run_downloader', downloader)
-    assert media.get_playlist_catalog() == {}
+    assert catalog_view(service.knowledge) == {}
     await service.sync(job)
     result = service.get(job['id'])
     assert result['state'] == 'error'
     assert result['imported'] == 1
     assert result['next_run'] > result['last_run']
-    assert len(next(iter(media.get_playlist_catalog().values()))) == 1
+    assert len(next(iter(catalog_view(service.knowledge).values()))) == 1
     failing = False
     await service.sync(result)
     assert service.get(job['id'])['state'] == 'idle'
     assert service.get(job['id'])['imported'] == 1
-    assert len(next(iter(media.get_playlist_catalog().values()))) == 2
+    assert len(next(iter(catalog_view(service.knowledge).values()))) == 2
     assert len(calls) == 3
     assert not any('..' in p.name for p in media.MEDIA_DIR.rglob('*.mp3'))
     await service.sync(service.get(job['id']))
@@ -141,7 +140,7 @@ def test_staging_is_not_playable(service):
     staging = media.MEDIA_DIR / '.sync-staging' / 'temp'
     staging.mkdir(parents=True)
     (staging / 'audio.mp3').write_bytes(b'incomplete')
-    assert media.get_playlist_catalog() == {}
+    assert catalog_view(service.knowledge) == {}
 
 
 async def test_failed_conversion_never_publishes_partial_audio(service, monkeypatch):
@@ -157,7 +156,7 @@ async def test_failed_conversion_never_publishes_partial_audio(service, monkeypa
     await service.sync(job)
     assert service.get(job['id'])['state'] == 'error'
     assert not list(media.MEDIA_DIR.rglob('*.mp3'))
-    assert media.get_playlist_catalog() == {}
+    assert catalog_view(service.knowledge) == {}
 
 
 async def test_cancel_terminates_downloader_process_group(monkeypatch):

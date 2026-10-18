@@ -23,7 +23,7 @@ from typing import Any
 from ontology import OntologyStore, EntityFilter, initialize_database
 from ontology.types import EntityType, LinkType
 
-from .media import scan_media_catalog, scan_playlist_catalog
+from .media_catalog import MediaCatalog
 from .household import HouseholdMemory
 
 logger = logging.getLogger(__name__)
@@ -102,66 +102,13 @@ class KnowledgeStore(HouseholdMemory):
         assert self._store is not None
         return self._store
 
+    @property
+    def media_catalog(self) -> MediaCatalog:
+        return MediaCatalog(self)
+
     def sync_media_catalog(self) -> None:
-        """Atomically sync catalog entities and classification associations."""
-        with self.store.transaction():
-            self._sync_media_catalog()
-
-    def _sync_media_catalog(self) -> None:
-        catalog = scan_media_catalog()
-        for item in catalog:
-            self.upsert_media(
-                file_id=item["id"],
-                title=item["title"],
-                filename=item["file"],
-                media_content_type=item.get("media_content_type", "music"),
-            )
-
-        playlist_catalog = scan_playlist_catalog()
-        tracks_by_file = {}
-        memberships = {}
-        for playlist_id, tracks in playlist_catalog.items():
-            for track in tracks:
-                tracks_by_file[track['file']] = track
-                memberships.setdefault(track['file'], []).append(playlist_id)
-        media_ids = {}
-        for filename, track in tracks_by_file.items():
-            track_id = filename.lower().replace('-', '_').replace(' ', '_')
-            metadata = {key: track.get(key, []) for key in ('subjects', 'cycles', 'weeks', 'tags', 'topics', 'entities')}
-            metadata.update(all_cycles=track.get('all_cycles', False),
-                            classification=track.get('classification'),
-                            confidence=track.get('confidence'), needs_review=track.get('needs_review'),
-                            explanation=track.get('explanation'),
-                            classification_status=track.get('classification_status'))
-            media_id = self.upsert_media(
-                file_id=track_id, title=track['title'], filename=filename,
-                media_content_type=track.get('media_content_type', 'music'),
-                playlist_id=memberships[filename][0], playlist_ids=memberships[filename], **metadata,
-            )
-            media_ids[filename] = media_id
-            self.sync_media_associations(media_id, track)
-        for playlist_id, tracks in playlist_catalog.items():
-            playlist, _ = self.store.upsert_entity(
-                'playlist', playlist_id.replace('_', ' ').title(),
-                properties={'playlist_id': playlist_id, 'track_count': len(tracks)},
-                match_on=('playlist_id', playlist_id),
-            )
-            desired = {media_ids[track['file']] for track in tracks}
-            # Containment describes the current catalog, not historical playback.
-            stale = self.store._db.execute(
-                "SELECT id, to_entity FROM links WHERE relationship_type='contains' AND from_entity=?",
-                (playlist.id,),
-            ).fetchall()
-            for link in stale:
-                if link['to_entity'] not in desired:
-                    self.store.delete_link(link['id'])
-            for position, track in enumerate(tracks):
-                self.store.upsert_link('contains', playlist.id, media_ids[track['file']], {'position': position})
-        nested_count = len(media_ids)
-        logger.info(
-            "Synced %d root media files and %d playlist tracks into ontology",
-            len(catalog), nested_count,
-        )
+        """Discover audio and migrate legacy metadata into the authoritative graph."""
+        self.media_catalog.reconcile()
 
     def sync_media_associations(self, media_id: str, track: dict) -> None:
         """Project validated agent metadata into graph nodes and owned links."""
@@ -289,7 +236,7 @@ class KnowledgeStore(HouseholdMemory):
             logger.info("Message --mentions--> %r", topic_clean)
 
         if media_id:
-            media_entity = self.store.get_entity_by_identifier("media_file", media_id)
+            media_entity = self.media_catalog.resolve(media_id, "media")
             if media_entity:
                 self.store.create_link("triggered", msg_entity.id, media_entity.id)
                 logger.info("Message --triggered--> %r", media_entity.name)
@@ -305,17 +252,16 @@ class KnowledgeStore(HouseholdMemory):
     # ─── Resumable Playback ──────────────────────────────────────────────────
 
     def reset_playback(self, playlist_ids: list[str]) -> None:
-        """Reset only the concrete playlists explicitly selected by the agent."""
-        catalog = scan_playlist_catalog()
-        if any(not isinstance(key, str) or key not in catalog for key in playlist_ids):
-            raise ValueError("Unknown playlist in reset request")
-        for playlist_id in set(playlist_ids):
+        """Reset only explicitly selected, validated playlists (UUIDs or old aliases)."""
+        playlists = [self.media_catalog.resolve(key, 'playlist') for key in playlist_ids]
+        if any(p is None for p in playlists):
+            raise ValueError('Unknown playlist in reset request')
+        for playlist in playlists:
+            alias = playlist.properties.get('playlist_id', playlist.id)
             rows = self.store._db.execute(
                 """SELECT id FROM entities WHERE entity_type='playback_session'
-                   AND json_extract(properties, '$.playlist_id') = ?
-                   AND json_extract(properties, '$.status') != 'superseded'""",
-                (playlist_id,),
-            ).fetchall()
+                   AND json_extract(properties, '$.playlist_id') IN (?, ?)""",
+                (alias, playlist.id),).fetchall()
             for row in rows:
                 self._set_playback_status(row['id'], 'superseded')
 
@@ -324,13 +270,15 @@ class KnowledgeStore(HouseholdMemory):
     ) -> dict[str, Any]:
         """Create or resume a playback session and return its cursor."""
         now = datetime.now(timezone.utc).isoformat()
-        playlist = self.store.get_entity_by_identifier("playlist_id", playlist_id)
+        playlist = self.media_catalog.resolve(playlist_id, "playlist")
         if not playlist:
             raise KeyError(f"Unknown playlist: {playlist_id}")
 
         # Ordered file identities prevent a legacy or reordered catalog from reusing
         # an unrelated cursor under the same CC week ID.
-        track_files = [track["file"] for track in scan_playlist_catalog().get(playlist_id, [])]
+        # Migration preserves historical cursors while canonicalizing playlist IDs.
+        playlist_id = playlist.id
+        track_files = [song.properties['filename'] for song in self.media_catalog.members(playlist.id)]
         session = None
         if operation == "resume":
             row = self.store._db.execute(
@@ -481,7 +429,7 @@ class KnowledgeStore(HouseholdMemory):
                      ('playing', 'stopped', 'interrupted', 'failed', 'completed')
                ORDER BY updated_at DESC"""
         ).fetchall()
-        playlists = scan_playlist_catalog()
+        playlists = {p.id: p for p in self.media_catalog.playlists()}
         seen = set()
         lines = []
         for row in rows:
@@ -490,7 +438,8 @@ class KnowledgeStore(HouseholdMemory):
             if playlist_id in seen:
                 continue
             seen.add(playlist_id)
-            tracks = playlists.get(playlist_id, [])
+            playlist = playlists.get(playlist_id)
+            tracks = [self.media_catalog.track(s) for s in self.media_catalog.members(playlist.id)] if playlist else []
             if not tracks:
                 continue
             files = props.get('track_files', [])
@@ -500,9 +449,9 @@ class KnowledgeStore(HouseholdMemory):
             completed_count = len(tracks) - len(remaining)
             next_title = remaining[0]['title'] if remaining else 'none'
             lines.append(
-                f"- {playlist_id}: {completed_count} of {len(tracks)} completed; "
+                f"- {playlist.id}: {completed_count} of {len(tracks)} completed; "
                 f"remaining: {len(remaining)}; next: {next_title}; "
-                f"status: {props.get('status', 'interrupted')}; last activity: {row['updated_at']}"
+                f"playlist: {playlist.name}; status: {props.get('status', 'interrupted')}; last activity: {row['updated_at']}"
             )
             if len(lines) >= limit:
                 break
@@ -780,7 +729,7 @@ class KnowledgeStore(HouseholdMemory):
         results = self.store.get_linked_entities_by_type(topic_ids, ["media"], limit=limit)
         return [
             {
-                "id": r["entity"].properties.get("filename", "").rsplit(".", 1)[0].lower().replace("-", "_").replace(" ", "_"),
+                "id": r["entity"].id,
                 "title": r["entity"].properties.get("title", r["entity"].name),
                 "file": r["entity"].properties.get("filename", ""),
             }

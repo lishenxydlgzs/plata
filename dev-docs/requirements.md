@@ -3,6 +3,9 @@
 ## Agent Server
 
 ### Implemented
+- [x] Main-only production deployment — deploy and source sync require the primary checkout on main after worktree changes are committed and merged
+- [x] Ontology-owned media catalog — unified song/playlist entity IDs, ordered membership, classification and availability, with one-time manifest migration and preserved playback progress
+- [x] Media catalog search — agent tool discovers songs and playlists, inspects membership, and selects imported or unclassified songs individually
 - [x] Telegram API onboarding — bot configuration, invitations, owner confirmation, status and revocation through the same REST API as the UI, with README walkthroughs
 - [x] Telegram household onboarding — guided bot setup, local QR invitations, expiring pairing and owner confirmation, account revocation, and first-conversation status
 - [x] Telegram text conversations — confirmed-account access, separate durable histories, shared-memory disclosure, restart-safe update handling and reply retries, and enforced text-only capabilities

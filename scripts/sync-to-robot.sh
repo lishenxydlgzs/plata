@@ -7,6 +7,9 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WORKSPACE_ROOT="$(dirname "$SCRIPT_DIR")"
 
+source "$SCRIPT_DIR/require-main-checkout.sh"
+require_main_checkout
+
 # Load environment
 if [ -f "$WORKSPACE_ROOT/.env" ]; then
   set -a; source "$WORKSPACE_ROOT/.env"; set +a

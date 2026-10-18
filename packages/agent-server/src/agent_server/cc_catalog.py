@@ -112,7 +112,7 @@ async def classify_tracks(tracks: list[dict], playlist_title: str, vocabulary: d
     return {track.video_id: track.model_dump() for track in batch.tracks}
 
 
-async def enrich_manifest(folder: Path, manifest: dict, playlist_title: str) -> list[str]:
+async def enrich_catalog(folder: Path, manifest: dict, playlist_title: str, save) -> list[str]:
     """Cache successful interpretations; retain last-good metadata on model failure."""
     errors = []
     pending = []
@@ -120,13 +120,13 @@ async def enrich_manifest(folder: Path, manifest: dict, playlist_title: str) -> 
         if not (folder / track['filename']).is_file():
             continue
         fingerprint = input_fingerprint(track['title'], playlist_title)
-        if track.get('classification', {}).get('input_hash') != fingerprint:
+        if track.get('classification_status') in {'pending', 'error'} or (track.get('classification') or {}).get('input_hash') != fingerprint:
             track['classification_status'] = 'pending'
             pending.append(track)
         else:
             track['classification_status'] = 'ready'
             track.pop('classification_error', None)
-    write_manifest(folder, manifest)
+    save(list(manifest['tracks'].values()))
     for offset in range(0, len(pending), BATCH_SIZE):
         batch = pending[offset:offset + BATCH_SIZE]
         vocabulary = {
@@ -157,7 +157,7 @@ async def enrich_manifest(folder: Path, manifest: dict, playlist_title: str) -> 
                 track['classification_status'] = 'error'
                 track['classification_error'] = error
             logger.warning('Song classification failed; retaining prior metadata: %s', error)
-        write_manifest(folder, manifest)
+        save(batch)
     logger.info('LLM metadata: %d classified this run, %d cached, %d failed batches',
                 len(pending) - sum(t.get('classification_status') == 'error' for t in pending),
                 len(manifest['tracks']) - len(pending), len(errors))

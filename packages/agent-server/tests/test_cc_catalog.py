@@ -8,15 +8,14 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from agent_server import media, playlist_sync as module
+from .catalog_helpers import catalog_view
 from agent_server import cc_catalog
-from agent_server.cc_catalog import read_manifest
 from agent_server.playlist_sync import NewSyncJob, PlaylistSync, SyncSettings, sync_router
 
 
 @pytest.fixture
 def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(media, 'MEDIA_DIR', tmp_path / 'media')
-    media.invalidate_playlist_cache()
     legacy = media.MEDIA_DIR / 'cc_cycle3' / 'week_5' / 'old_science.mp3'
     legacy.parent.mkdir(parents=True)
     legacy.write_bytes(b'backup')
@@ -66,14 +65,13 @@ def setup(tmp_path, monkeypatch):
     monkeypatch.setattr(module, 'run_downloader', download)
     yield service, job, entries, calls, failures, legacy
     service.db.close()
-    media.invalidate_playlist_cache()
 
 
 async def test_incremental_groups_refresh_titles_and_preserve_backup(setup):
     service, job, entries, calls, _, legacy = setup
     await service.sync(job)
     assert legacy.read_bytes() == b'backup'
-    catalog = media.get_playlist_catalog()
+    catalog = catalog_view(service.knowledge)
     assert len(catalog['cc_cycle3_week_5']) == 2
     assert catalog['cc_cycle3_week_5_science'][0]['title'] == entries[0]['title']
     assert len(catalog['cc_unclassified']) == 1
@@ -82,7 +80,7 @@ async def test_incremental_groups_refresh_titles_and_preserve_backup(setup):
         assert catalog[f'cc_cycle{cycle}_week_5_english'][0]['title'] == 'Week 5 Grammar'
     assert 'cc_cycle1_week_5_science' not in catalog
     assert not any(t['file'].startswith('cc_cycle3/') for tracks in catalog.values() for t in tracks)
-    assert media.resolve_playlist('cc_english')[0]['media_content_id'].endswith('.mp3')
+    assert service.knowledge.media_catalog.members('cc_english')
     assert len(calls) == 3
 
     # Same video with corrected title must move subjects without another download.
@@ -90,17 +88,16 @@ async def test_incremental_groups_refresh_titles_and_preserve_backup(setup):
     entries.append({'id': 'too_short', 'title': 'Cycle 3 Week 6 Math'})  # invalid ID ignored
     entries.append({'id': 'abcdef12345', 'title': 'Cycle 3 Week 6 Math'})
     await service.sync(service.get(job['id']))
-    catalog = media.get_playlist_catalog()
+    catalog = catalog_view(service.knowledge)
     assert 'cc_science' not in catalog
     assert catalog['cc_geography'][0]['title'] == entries[0]['title']
     assert len(catalog['cc_cycle3_week_6_math']) == 1
     assert len(calls) == 4
     # Folder names contain CC but subject filtering must use the refreshed title.
     source_id = job['folder'].lower()
-    assert media.resolve_playlist(source_id + '_science') is None
-    assert media.resolve_playlist(source_id + '_geography')
-    media.invalidate_playlist_cache()
-    assert 'cc_geography' in media.get_playlist_catalog()  # manifest survives cache/restart
+    assert not any('science' in s.properties['subjects'] for s in service.knowledge.media_catalog.members(source_id))
+    assert any('geography' in s.properties['subjects'] for s in service.knowledge.media_catalog.members(source_id))
+    assert 'cc_geography' in catalog_view(service.knowledge)  # manifest survives cache/restart
 
 
 async def test_failed_first_import_does_not_hide_legacy_but_later_failure_keeps_cutover(setup):
@@ -109,16 +106,16 @@ async def test_failed_first_import_does_not_hide_legacy_but_later_failure_keeps_
     await service.sync(job)
     assert service.get(job['id'])['state'] == 'error'
     assert any(t['file'] == str(legacy.relative_to(media.MEDIA_DIR))
-               for t in media.get_playlist_catalog()['cc_cycle3_week_5'])
+               for t in catalog_view(service.knowledge)['cc_cycle3_week_5'])
     failures.clear()
     await service.sync(service.get(job['id']))
-    assert read_manifest(media.MEDIA_DIR / job['folder'])['replace_legacy_cc']
+    assert service.knowledge.media_catalog.source_state(job['folder'])['replace_legacy_cc']
     entries.append({'id': 'abcdef12345', 'title': 'Week 6 Math'})
     failures.add('abcdef12345')
     await service.sync(service.get(job['id']))
     assert service.get(job['id'])['state'] == 'error'
     assert all(not t['file'].startswith('cc_cycle3/')
-               for t in media.get_playlist_catalog()['cc_cycle3_week_5'])
+               for t in catalog_view(service.knowledge)['cc_cycle3_week_5'])
     assert legacy.exists()
 
 
@@ -126,8 +123,8 @@ async def test_empty_playlist_keeps_legacy_visible(setup):
     service, job, entries, _, _, _ = setup
     entries.clear()
     await service.sync(job)
-    assert len(media.get_playlist_catalog()['cc_cycle3_week_5']) == 1
-    assert not read_manifest(media.MEDIA_DIR / job['folder'])['replace_legacy_cc']
+    assert len(catalog_view(service.knowledge)['cc_cycle3_week_5']) == 1
+    assert not service.knowledge.media_catalog.source_state(job['folder'])['replace_legacy_cc']
 
 
 async def test_api_preserves_cc_settings_and_can_restore_legacy(setup):
@@ -150,9 +147,9 @@ async def test_api_preserves_cc_settings_and_can_restore_legacy(setup):
         await service.sync(result.json())
         assert len(calls) == 3
         assert any(t['file'] == str(legacy.relative_to(media.MEDIA_DIR))
-                   for t in media.get_playlist_catalog()['cc_cycle3_week_5'])
+                   for t in catalog_view(service.knowledge)['cc_cycle3_week_5'])
         # Shared songs remain in each cycle's weekly group.
-        assert len(media.get_playlist_catalog()['cc_cycle3_week_5']) == 3
+        assert len(catalog_view(service.knowledge)['cc_cycle3_week_5']) == 3
 
 
 async def test_existing_generic_job_can_enable_cc_without_redownloading(setup):
@@ -160,11 +157,11 @@ async def test_existing_generic_job_can_enable_cc_without_redownloading(setup):
     service.settings(job['id'], SyncSettings(interval_hours=24, cc_mode=False,
                                             replace_legacy_cc=False))
     await service.sync(service.get(job['id']))
-    assert 'cc' not in media.get_playlist_catalog()
+    assert 'cc' not in catalog_view(service.knowledge)
     service.settings(job['id'], SyncSettings(interval_hours=24, cc_mode=True, replace_legacy_cc=True))
     await service.sync(service.get(job['id']))
     assert len(calls) == 3
-    assert len(media.get_playlist_catalog()['cc']) == 3
+    assert len(catalog_view(service.knowledge)['cc']) == 3
 
 
 async def test_create_cc_job_api_and_persist_settings(tmp_path):
@@ -187,3 +184,27 @@ async def test_create_cc_job_api_and_persist_settings(tmp_path):
     assert job['cc_mode'] and job['replace_legacy_cc']
     assert job['interval_hours'] == 12
     restarted.db.close()
+
+
+async def test_classifier_failure_retries_after_restart_without_download(setup, monkeypatch):
+    service, job, entries, downloads, _, _ = setup
+    from agent_server import cc_catalog
+    original = cc_catalog.generate_chat_json
+    async def fail(*args, **kwargs):
+        raise ValueError('Sample invalid structured response')
+    monkeypatch.setattr(cc_catalog, 'generate_chat_json', fail)
+    await service.sync(job)
+    assert service.get(job['id'])['state'] == 'error'
+    tracks = service.knowledge.media_catalog.source_state(job['folder'])['tracks']
+    assert all(t['classification_status'] == 'error' for t in tracks.values())
+    assert len(downloads) == 3
+    assert not (media.MEDIA_DIR / job['folder'] / '.cc-catalog.json').exists()
+    restarted = PlaylistSync(service.db_path)
+    restarted.connect()
+    monkeypatch.setattr(cc_catalog, 'generate_chat_json', original)
+    await restarted.sync(restarted.get(job['id']))
+    assert restarted.get(job['id'])['state'] == 'idle'
+    assert len(downloads) == 3
+    assert catalog_view(restarted.knowledge)['cc_cycle3_week_5_science']
+    restarted.db.close()
+    restarted.knowledge.store._db.close()

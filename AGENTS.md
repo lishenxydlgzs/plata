@@ -28,9 +28,18 @@ Monorepo with packages in `packages/`:
 
 1. **Local development** — edit code in this workspace
 2. **Run tests** — `source .venv/bin/activate && cd packages/agent-server && python -m pytest tests/ -v`
-3. **Deploy** — `./scripts/deploy.sh` (see below)
+3. **Integrate** — commit worktree changes and merge into `main` in the primary checkout
+4. **Deploy** — run `./scripts/deploy.sh` from the primary checkout on `main` (see below)
 
 ## Deploy
+
+Production deployments and source syncs must run only from the primary repository
+checkout (`/Users/lishenxydlgzs/plata`) on branch `main`. Never deploy a linked
+worktree or detached HEAD. Commit changes in the development worktree, merge them
+into `main`, verify the integrated code, and deploy from that primary checkout.
+Preserve unrelated local changes. `deploy.sh` and `sync-to-robot.sh` enforce the
+checkout and branch rule. Use the normal deployment script so release and database
+backups and rollback remain available; do not bypass it with ad hoc source uploads.
 
 ```bash
 ./scripts/deploy.sh        # sync + restart agent server only

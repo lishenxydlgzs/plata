@@ -22,6 +22,7 @@ def media_dir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 async def client(media_dir):
     await conversation_db.connect()
     knowledge_store.connect()
+    knowledge_store.sync_media_catalog()
     transport = ASGITransport(app=app)
     async with AsyncClient(transport=transport, base_url="http://test") as c:
         yield c
@@ -245,28 +246,6 @@ async def test_cc_transcription_variant_is_sent_to_llm_with_guidance(
     assert response.json()["reply_text"] == "I understand the CC request."
 
 
-def test_cycle3_playlists_are_compacted_in_llm_prompt():
-    from agent_server.modes.chat import _format_playlist_catalog
-
-    playlists = {f"cc_cycle3_week_{week}": [] for week in range(1, 25)}
-    playlists["bedtime_favorites"] = []
-
-    formatted = _format_playlist_catalog(playlists)
-
-    assert "cc_cycle3_week_${weekN}" in formatted
-    assert "where ${weekN} is 1 through 24" in formatted
-    assert "- bedtime_favorites" in formatted
-    assert "- cc_cycle3_week_1\n" not in formatted
-
-
-def test_incomplete_cycle3_playlist_set_is_listed_explicitly():
-    from agent_server.modes.chat import _format_playlist_catalog
-
-    formatted = _format_playlist_catalog({"cc_cycle3_week_1": []})
-
-    assert formatted == "- cc_cycle3_week_1"
-
-
 async def test_status(client: AsyncClient):
     resp = await client.get("/status")
     assert resp.status_code == 200
@@ -460,12 +439,12 @@ async def test_cc_week_and_continue_route_whole_playlists_with_saved_progress(cl
         folder.mkdir(parents=True)
         for subject in ('English', 'Science'):
             (folder / f'{subject}.mp3').write_bytes(b'audio')
-    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
     knowledge_store.sync_media_catalog()
     selected = {'reply_text': 'Playing.', 'media_ids': ['cc_cycle3_week_3'], 'media_operation': 'play'}
 
     async def generate(system_prompt, history, user_text, **kwargs):
-        assert 'cc_week_3' in system_prompt
+        assert 'Use exact entity IDs returned by search_media' in system_prompt
         return selected
 
     monkeypatch.setattr(chat, 'generate_chat_json', generate)
@@ -491,7 +470,7 @@ async def test_cc_week_and_continue_route_whole_playlists_with_saved_progress(cl
     assert all('week_4/' in track for track in next_data['tracks'])
     assert next_data['start_index'] == 0
     assert advanced['reply_text'] == 'Ready for week 4!'
-    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
 
 
 async def test_playback_intent_and_reply_are_owned_by_model(client, media_dir, monkeypatch):
@@ -500,7 +479,7 @@ async def test_playback_intent_and_reply_are_owned_by_model(client, media_dir, m
         folder = media_dir / 'cc_cycle3' / f'week_{week}'
         folder.mkdir(parents=True)
         (folder / 'Science.mp3').write_bytes(b'audio')
-    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
     knowledge_store.sync_media_catalog()
     previous = knowledge_store.begin_playback('cc_cycle3_week_3', 1)
     knowledge_store.update_playback(previous['session_id'], 'track_completed', 0)
@@ -508,9 +487,9 @@ async def test_playback_intent_and_reply_are_owned_by_model(client, media_dir, m
                 'media_operation': 'restart', 'reset_playlist_ids': []}
 
     async def generate(system_prompt, history, user_text, **kwargs):
-        assert 'cc_cycle3_week_3: 1 of 1 completed; remaining: 0' in system_prompt
+        assert f"{knowledge_store.media_catalog.resolve('cc_cycle3_week_3').id}: 1 of 1 completed; remaining: 0" in system_prompt
         assert 'it does not infer a cycle or choose a next week' in system_prompt
-        assert 'cc_cycle3_week_4' in system_prompt
+        assert 'Use search_media to discover available songs and playlists' in system_prompt
         return selected
 
     monkeypatch.setattr(chat, 'generate_chat_json', generate)
@@ -519,7 +498,7 @@ async def test_playback_intent_and_reply_are_owned_by_model(client, media_dir, m
     assert data['reply_text'] == selected['reply_text']
     assert all('week_3/' in file for file in data['actions'][0]['data']['service_data']['tracks'])
     assert data['actions'][0]['data']['service_data']['start_index'] == 0
-    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
 
 
 async def test_stop_keywords_do_not_override_llm_interpretation(client, monkeypatch):
@@ -541,7 +520,7 @@ async def test_completed_resume_does_not_substitute_next_week(client, media_dir,
         folder = media_dir / 'cc_cycle3' / f'week_{week}'
         folder.mkdir(parents=True)
         (folder / 'Science.mp3').write_bytes(b'audio')
-    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
     knowledge_store.sync_media_catalog()
     first = knowledge_store.begin_playback('cc_cycle3_week_3', 1)
     knowledge_store.update_playback(first['session_id'], 'track_completed', 0)
@@ -554,7 +533,7 @@ async def test_completed_resume_does_not_substitute_next_week(client, media_dir,
     assert response.json()['actions'] == []
     assert response.json()['reply_text'] == 'That week is complete.'
     assert knowledge_store.store.get_entity(first['session_id']).properties['status'] == 'completed'
-    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
 
 
 @pytest.mark.parametrize('operation,reset_ids,expected', [
@@ -568,7 +547,7 @@ async def test_model_reset_scope_is_validated(client, media_dir, monkeypatch, op
         folder = media_dir / 'cc_cycle3' / f'week_{week}'
         folder.mkdir(parents=True)
         (folder / 'Science.mp3').write_bytes(b'audio')
-    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
     knowledge_store.sync_media_catalog()
     previous = knowledge_store.begin_playback('cc_cycle3_week_4', 1)
     knowledge_store.update_playback(previous['session_id'], 'track_completed', 0)
@@ -581,7 +560,7 @@ async def test_model_reset_scope_is_validated(client, media_dir, monkeypatch, op
     response = await client.post('/conversation', json={'text': 'Start the sequence over', 'conversation_id': 'sample-reset'})
     assert response.status_code == 200
     assert knowledge_store.store.get_entity(previous['session_id']).properties['status'] == expected
-    media.invalidate_playlist_cache()
+    knowledge_store.sync_media_catalog()
 
 
 @pytest.mark.parametrize('choice', [
@@ -612,3 +591,65 @@ async def test_telegram_capabilities_block_actions_before_state_changes(client, 
     stop.assert_not_called()
     begin.assert_not_called()
     reset.assert_not_called()
+
+
+async def test_search_selected_nested_song_plays_individually(client, media_dir, monkeypatch):
+    from agent_server.modes import chat
+    from agent_server.media_search import search_catalog
+    folder = media_dir / 'imported'
+    folder.mkdir()
+    (folder / 'sample_science.mp3').write_bytes(b'audio')
+    knowledge_store.sync_media_catalog()
+    song = search_catalog(knowledge_store, kind='song', query='sample science')['results'][0]
+
+    async def generate(system_prompt, history, user_text, **kwargs):
+        assert 'search_media' in system_prompt
+        assert len(kwargs['tools']) == 2
+        return {'reply_text': 'Playing the selected song.', 'media_ids': [song['id']]}
+
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    response = await client.post('/conversation', json={'text': 'Play the selected song',
+                                                       'conversation_id': 'sample-search-play'})
+    data = response.json()['actions'][0]['data']
+    assert data['service'] == 'play_media'
+    assert data['service_data']['media_content_id'].endswith('/imported/sample_science.mp3')
+
+
+async def test_ontology_selected_song_links_history_and_rechecks_file(client, media_dir, monkeypatch):
+    from agent_server.modes import chat
+    catalog = knowledge_store.media_catalog
+    song = catalog.resolve('bedtime', 'media')
+    async def generate(system_prompt, history, user_text, **kwargs):
+        found = await kwargs['tools'][1](kind='song', entity_ids=[song.id])
+        assert found['results'][0]['id'] == song.id
+        return {'reply_text': 'Playing the selected song.', 'media_ids': [song.id]}
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    payload = {'text': 'Play the selected song', 'conversation_id': 'sample-ontology-song'}
+    response = await client.post('/conversation', json=payload)
+    assert response.json()['actions'][0]['data']['service'] == 'play_media'
+    assert any(l.relationship_type == 'triggered' and l.to_entity == song.id
+               for l in knowledge_store.store.get_all_links())
+    # File disappears after discovery: executor must reject the stale result.
+    (media_dir / 'bedtime.mp3').unlink()
+    response = await client.post('/conversation', json=payload)
+    assert response.json()['actions'] == []
+
+
+async def test_playlist_uuid_executes_graph_order_and_refuses_missing_member(client, media_dir, monkeypatch):
+    from agent_server.modes import chat
+    catalog = knowledge_store.media_catalog
+    songs = [catalog.resolve('story', 'media'), catalog.resolve('bedtime', 'media')]
+    playlist = catalog.playlist('sample_manual', origin='manual')
+    catalog.set_members(playlist, songs)
+    async def generate(*args, **kwargs):
+        return {'reply_text': 'Playing.', 'media_ids': [playlist.id]}
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    payload = {'text': 'Play the selected playlist', 'conversation_id': 'sample-ontology-playlist'}
+    data = (await client.post('/conversation', json=payload)).json()
+    service = data['actions'][0]['data']['service_data']
+    assert [p.rsplit('/', 1)[-1] for p in service['tracks']] == ['story.mp3', 'bedtime.mp3']
+    session = knowledge_store.store.get_entity(service['session_id'])
+    assert session.properties['playlist_id'] == playlist.id
+    (media_dir / 'bedtime.mp3').unlink()
+    knowledge_store.sync_media_catalog()
+    assert (await client.post('/conversation', json=payload)).json()['actions'] == []

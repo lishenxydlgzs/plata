@@ -18,7 +18,8 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from . import media
-from .cc_catalog import enrich_manifest, read_manifest, write_manifest
+from .cc_catalog import enrich_catalog
+from .knowledge import KnowledgeStore
 from .job_history import ExecutionHistory, active_run
 from datetime import datetime, timedelta
 
@@ -83,7 +84,9 @@ async def run_downloader(*args: str) -> str:
 
 
 class PlaylistSync:
-    def __init__(self, db_path: Path | None = None, maintenance=None, on_catalog_changed=None):
+    def __init__(self, db_path: Path | None = None, maintenance=None, on_catalog_changed=None, knowledge=None):
+        self.knowledge = knowledge
+        self._owns_knowledge = knowledge is None
         self.db_path = db_path or Path(os.getenv("DB_DIR", "./data")) / "playlist-sync.sqlite3"
         self.db = None
         self.task = None
@@ -93,6 +96,10 @@ class PlaylistSync:
         self.on_catalog_changed = on_catalog_changed
 
     def connect(self):
+        if self.knowledge is None:
+            self.knowledge = KnowledgeStore()
+            self.knowledge.connect()
+            self.knowledge.sync_media_catalog()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.db_path)
         self.db.row_factory = sqlite3.Row
@@ -236,25 +243,23 @@ class PlaylistSync:
             info = json.loads(await run_downloader("--flat-playlist", "--dump-single-json", job["url"]))
             folder = media.MEDIA_DIR / job["folder"]
             folder.mkdir(parents=True, exist_ok=True)
-            manifest = read_manifest(folder)
+            catalog = self.knowledge.media_catalog
+            manifest = catalog.source_state(job["folder"])
             # Preserve a completed cutover through transient failures on later runs.
             if not job["cc_mode"] or not job["replace_legacy_cc"]:
                 manifest["replace_legacy_cc"] = False
             manifest["cc_mode"] = bool(job["cc_mode"])
 
             def publish(video_id, title, filename):
-                track = manifest['tracks'].setdefault(video_id, {
-                    'subjects': [], 'cycles': [], 'cycle': None, 'all_cycles': False,
-                    'weeks': [], 'tags': [], 'topics': [], 'entities': [],
-                })
-                track.update(video_id=video_id, title=title, filename=filename)
-                write_manifest(folder, manifest)
-                media.invalidate_playlist_cache()
+                catalog.publish(job['folder'], video_id, title, filename, position)
+                manifest['tracks'] = catalog.source_state(job['folder'])['tracks']
 
+            catalog.configure_source(job['folder'], cc_mode=manifest['cc_mode'],
+                                     replace_legacy_cc=manifest.get('replace_legacy_cc', False))
             staging = media.MEDIA_DIR / ".sync-staging"
             staging.mkdir(exist_ok=True)
             logger.info("Playlist loaded; checking for new audio")
-            for entry in info.get("entries", []):
+            for position, entry in enumerate(info.get("entries", [])):
                 if not entry:
                     continue
                 video_id = entry.get("id", "")
@@ -263,8 +268,7 @@ class PlaylistSync:
                 title = entry.get("title") or video_id
                 existing = next(folder.glob(f"*__{video_id}.mp3"), None)
                 if existing and existing.stat().st_size > 0:
-                    if job["cc_mode"]:
-                        publish(video_id, title, existing.name)
+                    publish(video_id, title, existing.name)
                     logger.info("Already imported: %s", video_id)
                     continue
                 try:
@@ -280,22 +284,23 @@ class PlaylistSync:
                             raise RuntimeError("Conversion produced no audio")
                         filename = f"{slug(title)}__{video_id}.mp3"
                         target.replace(folder / filename)
-                    if job["cc_mode"]:
-                        publish(video_id, title, filename)
+                    publish(video_id, title, filename)
                     logger.info("Imported audio: %s", video_id)
                     imported += 1
-                    media.invalidate_playlist_cache()
                 except Exception as exc:
                     logger.warning("Import failed for %s: %s", video_id, str(exc)[-1500:])
                     errors.append(f"{video_id}: {str(exc)[-1500:]}")
             if job["cc_mode"]:
-                errors.extend(await enrich_manifest(folder, manifest, info.get('title') or job['folder']))
+                errors.extend(await enrich_catalog(folder, manifest, info.get('title') or job['folder'],
+                                                  catalog.save_classifications))
                 if not errors and any((folder / t["filename"]).is_file() for t in manifest["tracks"].values()):
                     manifest["replace_legacy_cc"] = bool(job["replace_legacy_cc"])
                 unclassified = sum(not t["subjects"] for t in manifest["tracks"].values())
                 logger.info("CC catalog: %d tracks; %d unclassified", len(manifest["tracks"]), unclassified)
-            write_manifest(folder, manifest)
-            media.invalidate_playlist_cache()
+            with catalog.store.transaction():
+                catalog.configure_source(job['folder'], cc_mode=manifest['cc_mode'],
+                                         replace_legacy_cc=manifest.get('replace_legacy_cc', False))
+                catalog.rebuild_groups()
         except Exception as exc:
             errors.append(str(exc)[-1500:])
         with self.db:
@@ -327,6 +332,8 @@ class PlaylistSync:
                 await self.task
         if self.db:
             self.db.close()
+        if self._owns_knowledge and self.knowledge:
+            self.knowledge.store._db.close()
 
 
 def sync_router(service: PlaylistSync) -> APIRouter:
@@ -343,7 +350,7 @@ def sync_router(service: PlaylistSync) -> APIRouter:
     @router.get("/{job_id}/tracks")
     async def tracks(job_id: str):
         job = service.get(job_id)
-        manifest = read_manifest(media.MEDIA_DIR / job["folder"])
+        manifest = service.knowledge.media_catalog.source_state(job['folder'])
         return {"cc_mode": manifest.get("cc_mode", False),
                 "replacement_active": manifest.get("replace_legacy_cc", False),
                 "tracks": list(manifest["tracks"].values())}

@@ -25,41 +25,34 @@ homeassistant:
     local: /config/media
 ```
 
-The agent references those files with `media-source` URIs generated from `packages/agent-server/src/agent_server/media_catalog.json`:
-
-```text
-media-source://media_source/local/kids_robot/bedtime.mp3
-media-source://media_source/local/kids_robot/story.mp3
-media-source://media_source/local/kids_robot/BINGO.mp4
-```
-
-The HA deploy path creates this directory automatically with `./scripts/deploy.sh --ha`. Place audio files there before using the commands.
+Audio files remain in Home Assistant's local media source. The ontology database
+owns their catalog records, playlist membership, classification, availability and
+playback history. See [Ontology-owned media catalog](ontology-media-catalog.md).
 
 ## Media Catalog
 
-The catalog is built dynamically by scanning the media directory at runtime. No static JSON file is needed. Each audio file found produces a catalog entry:
+At startup, filesystem reconciliation discovers audio and refreshes availability.
+A one-time transactional migration imports legacy CC manifests and reuses existing
+song/playlist entities. Later scans do not overwrite database metadata. Import jobs
+publish new audio and classification state directly into the ontology.
 
-- `id`: derived from the filename stem (lowercased, hyphens/spaces replaced with underscores)
-- `title`: derived from the filename stem (underscores/hyphens become spaces, title-cased)
-- `file`: the actual filename on disk
-- `media_content_type`: always `music`
+The conversation agent calls `search_media` to find individual songs and playlists
+using literal text or structured filters, and can inspect ordered playlist members.
+Both result kinds use ontology entity UUIDs. Imported and unclassified songs are
+individually discoverable. The prompt includes search instructions and recent
+playback progress, rather than a list of filename/playlist IDs.
 
-Supported extensions: `.mp3`, `.mp4`, `.wav`, `.ogg`, `.flac`, `.m4a`
-
-Upload normalization collapses repeated periods in filenames. Home Assistant
-rejects media paths containing `..` as unsafe.
-
-To add a playable file, just copy the audio into the HA media directory with a descriptive filename (e.g., `bedtime_music.mp3`, `bingo_song.mp3`). The filename becomes the title the LLM uses for matching, so name files clearly.
+Supported extensions: `.mp3`, `.mp4`, `.wav`, `.ogg`, `.flac`, `.m4a`.
+Execution accepts only catalog records whose files remain available within the
+media directory; hidden paths, traversal and escaping symlinks are rejected.
 
 ## Backend Behavior
 
 All playback requests, including stopping and negations, go to the LLM with the media catalog and saved progress. The model returns concrete `media_ids`, a `media_operation`, optional explicit `reset_playlist_ids`, and its spoken reply. The backend validates and executes these selections without choosing a different playlist or rewriting the reply.
 
-To keep the system prompt concise, the complete CC Cycle 3 playlist set is represented
-as the pattern `cc_cycle3_week_${weekN}`, where `${weekN}` is 1 through 24, rather
-than listing all 24 weekly IDs. Other playlist IDs remain listed individually. If the
-Cycle 3 set is incomplete, its available IDs are also listed individually so the LLM
-is not told that missing weeks exist.
+The backend resolves selected UUIDs to songs or ordered playlist members in the
+same ontology repository used by search. Historical IDs remain resolution aliases
+for compatibility. A playlist with missing members cannot silently skip them.
 
 - Single track: returns a `media_player.play_media` action
 - Multiple tracks: returns a `kids_robot.play_playlist` action with a `tracks` list

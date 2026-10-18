@@ -23,7 +23,6 @@ def playback_store(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Knowledge
 
     monkeypatch.setattr(media, "MEDIA_DIR", media_dir)
     monkeypatch.setattr(knowledge, "ONTOLOGY_DB_PATH", tmp_path / "ontology.db")
-    media._playlist_cache = None
 
     store = KnowledgeStore()
     store.connect()
@@ -78,7 +77,7 @@ def test_playback_prompt_includes_next_track(playback_store: KnowledgeStore):
 
     prompt = playback_store.build_playback_prompt()
 
-    assert "cc_cycle3_week_3: 1 of 3 completed" in prompt
+    assert f"{playback_store.media_catalog.resolve('cc_cycle3_week_3').id}: 1 of 3 completed" in prompt
     assert "next: 02 History" in prompt
     assert "status: stopped" in prompt
 
@@ -125,12 +124,13 @@ def test_replacing_week_tracks_does_not_resume_legacy_cursor(playback_store, mon
     started = playback_store.begin_playback('cc_cycle3_week_3', 3, 'play')
     playback_store.update_playback(started['session_id'], 'track_completed', 0)
     playback_store.update_playback(started['session_id'], 'stopped')
-    catalog = {'cc_cycle3_week_3': [
-        {'file': 'curated/sample.mp3', 'title': 'Sample replacement', 'media_content_type': 'music'},
-    ]}
-    monkeypatch.setattr(knowledge, 'scan_playlist_catalog', lambda: catalog)
+    folder = media.MEDIA_DIR / 'curated'
+    folder.mkdir()
+    (folder / 'sample.mp3').write_bytes(b'audio')
+    catalog = playback_store.media_catalog
+    song = catalog.song('curated/sample.mp3', title='Sample replacement')
+    catalog.set_members(catalog.resolve('cc_cycle3_week_3'), [song])
     assert '0 of 1 completed; remaining: 1' in playback_store.build_playback_prompt()
-    playback_store.sync_media_catalog()
     resumed = playback_store.begin_playback('cc_cycle3_week_3', 1, 'resume')
     assert resumed['start_index'] == 0
     assert resumed['session_id'] != started['session_id']
@@ -141,7 +141,7 @@ def test_completed_week_is_context_not_an_automatic_advance(playback_store):
     first = playback_store.begin_playback('cc_cycle3_week_3', 3)
     playback_store.update_playback(first['session_id'], 'track_completed', 2)
     prompt = playback_store.build_playback_prompt()
-    assert 'cc_cycle3_week_3: 3 of 3 completed; remaining: 0' in prompt
+    assert f"{playback_store.media_catalog.resolve('cc_cycle3_week_3').id}: 3 of 3 completed; remaining: 0" in prompt
     assert 'status: completed' in prompt
     assert 'advance' not in prompt
     # The executor may only resume the exact playlist selected by the model.
@@ -168,7 +168,7 @@ def test_resume_preserves_completed_songs_when_new_song_sorts_before_them(playba
     store.update_playback(first['session_id'], 'track_completed', 0)
     store.update_playback(first['session_id'], 'stopped')
     (media.MEDIA_DIR / 'cc_cycle3/week_3/00_New.mp3').write_bytes(b'audio')
-    media.invalidate_playlist_cache()
+    playback_store.sync_media_catalog()
     store.sync_media_catalog()
     resumed = store.begin_playback('cc_cycle3_week_3', 4, 'resume')
     assert resumed == {'session_id': first['session_id'], 'start_index': 1}
@@ -181,7 +181,7 @@ def test_completed_week_with_new_song_resumes_new_song_before_advancing(playback
     first = playback_store.begin_playback('cc_cycle3_week_3', 3)
     playback_store.update_playback(first['session_id'], 'track_completed', 2)
     (media.MEDIA_DIR / 'cc_cycle3/week_3/00_New.mp3').write_bytes(b'audio')
-    media.invalidate_playlist_cache()
+    playback_store.sync_media_catalog()
     assert 'remaining: 1' in playback_store.build_playback_prompt()
     resumed = playback_store.begin_playback('cc_cycle3_week_3', 4, 'resume')
     assert resumed['start_index'] == 3
@@ -194,7 +194,7 @@ def test_cc_resume_survives_server_restart(playback_store):
     playback_store.update_playback(first['session_id'], 'interrupted')
     restarted = KnowledgeStore()
     restarted.connect()
-    assert 'cc_cycle3_week_3: 1 of 3 completed; remaining: 2' in restarted.build_playback_prompt()
+    assert f"{playback_store.media_catalog.resolve('cc_cycle3_week_3').id}: 1 of 3 completed; remaining: 2" in restarted.build_playback_prompt()
     assert restarted.begin_playback('cc_cycle3_week_3', 3, 'resume')['start_index'] == 1
     restarted.store._db.close()
 
@@ -204,5 +204,5 @@ def test_progress_context_includes_latest_state_per_playlist(playback_store):
     playback_store.update_playback(first['session_id'], 'track_completed', 2)
     playback_store.begin_playback('cc_cycle3_week_3', 3, 'restart')
     prompt = playback_store.build_playback_prompt()
-    assert prompt.count('cc_cycle3_week_3:') == 1
+    assert prompt.count(f"{playback_store.media_catalog.resolve('cc_cycle3_week_3').id}:") == 1
     assert '0 of 3 completed; remaining: 3' in prompt
