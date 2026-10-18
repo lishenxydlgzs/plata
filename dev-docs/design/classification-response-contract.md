@@ -7,8 +7,11 @@ schema. The runtime correctly rejected the array before metadata publication.
 
 ## Change
 Add an optional response schema to the shared structured runtime and pass it to
-Gemini as response_json_schema alongside application/json. Classification supplies
-ClassificationBatch.model_json_schema() and explicitly describes the top-level
+Gemini as response_json_schema alongside application/json. Classification supplies a projection of its Pydantic schema containing core
+object/array types, required fields, and enums, with references inlined. The live
+endpoint rejects the full constraint schema with 400 INVALID_ARGUMENT; synthetic
+requests verified the projection. Full bounds, patterns, extra-field checks and
+semantic constraints remain in local Pydantic validation. Instructions describe the top-level
 tracks object in its instructions. Preserve schema configuration through model
 fallbacks. Reject schema plus tools for this text-only path before a model call.
 Keep strict Pydantic, exact video membership, cached metadata, and retry validation;

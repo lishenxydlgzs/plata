@@ -134,8 +134,8 @@ async def test_rejected_response_diagnostics(monkeypatch, caplog, reply, error, 
 
 
 async def test_response_schema_reaches_provider_and_survives_fallback(monkeypatch):
-    from agent_server.cc_catalog import ClassificationBatch
-    schema = ClassificationBatch.model_json_schema()
+    from agent_server.cc_catalog import classification_response_schema
+    schema = classification_response_schema()
 
     async def generate(request):
         assert request['config']['response_json_schema'] == schema

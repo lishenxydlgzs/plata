@@ -60,6 +60,27 @@ class ClassificationBatch(BaseModel):
     tracks: list[TrackClassification] = Field(min_length=1, max_length=BATCH_SIZE)
 
 
+def classification_response_schema() -> dict:
+    """Constrain generation shape; enforce bounds and semantic rules locally.
+
+    The live endpoint rejects the full Pydantic constraint schema. Project only
+    core supported structure/types/enums and inline this finite model's refs.
+    """
+    schema = ClassificationBatch.model_json_schema()
+
+    def project(node):
+        if '$ref' in node:
+            return project(schema['$defs'][node['$ref'].split('/')[-1]])
+        result = {key: value for key, value in node.items() if key in {'type', 'enum', 'required'}}
+        if 'properties' in node:
+            result['properties'] = {key: project(value) for key, value in node['properties'].items()}
+        if 'items' in node:
+            result['items'] = project(node['items'])
+        return result
+
+    return project(schema)
+
+
 CLASSIFICATION_PROMPT = """You organize a curated Classical Conversations (CC) music library.
 Interpret each public video title and the playlist context to assign useful metadata.
 Return a JSON object with a "tracks" array matching the supplied schema, exactly
@@ -105,7 +126,7 @@ async def classify_tracks(tracks: list[dict], playlist_title: str, vocabulary: d
         CLASSIFICATION_PROMPT + '\nOutput schema:\n' + json.dumps(ClassificationBatch.model_json_schema()),
         [], json.dumps({'playlist_title': playlist_title, 'tracks': tracks, 'existing_vocabulary': vocabulary}, ensure_ascii=False),
         max_output_tokens=6144, timeout_seconds=45, temperature=0, log_response_on_error=True,
-        response_schema=ClassificationBatch.model_json_schema(),
+        response_schema=classification_response_schema(),
     )
     try:
         batch = ClassificationBatch.model_validate(result)

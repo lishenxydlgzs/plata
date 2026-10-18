@@ -193,10 +193,33 @@ async def test_classification_supplies_provider_response_schema(library, monkeyp
     original = cc.generate_chat_json
 
     async def generate(*args, **kwargs):
-        assert kwargs['response_schema'] == cc.ClassificationBatch.model_json_schema()
+        assert kwargs['response_schema'] == cc.classification_response_schema()
         assert 'top-level value must be an object' in args[0]
         return await original(*args, **kwargs)
 
     monkeypatch.setattr(cc, 'generate_chat_json', generate)
     assert await enrich(store, folder) == []
     assert track(store)['classification_status'] == 'ready'
+
+
+def test_provider_schema_keeps_nested_contract_without_unsupported_constraints():
+    schema = cc.classification_response_schema()
+    assert schema['type'] == 'object'
+    assert schema['required'] == ['tracks']
+    track_schema = schema['properties']['tracks']['items']
+    assert set(track_schema['required']) == set(cc.TrackClassification.model_fields)
+    assert track_schema['properties']['subjects']['items']['enum'] == list(cc.Subject.__args__)
+    entity = track_schema['properties']['entities']['items']
+    assert entity['required'] == ['kind', 'name']
+    def check(node):
+        assert set(node) <= {'type', 'enum', 'required', 'properties', 'items'}
+        for child in node.get('properties', {}).values():
+            check(child)
+        if 'items' in node:
+            check(node['items'])
+    check(schema)
+    # Full local constraints remain authoritative even though generation omits them.
+    invalid = result()
+    invalid['weeks'] = [25]
+    with pytest.raises(ValueError):
+        cc.ClassificationBatch.model_validate({'tracks': [invalid]})
