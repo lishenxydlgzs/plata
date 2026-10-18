@@ -5,7 +5,7 @@ import logging
 import json
 
 from strands import Agent
-from strands.hooks import AfterToolCallEvent, BeforeModelCallEvent, HookProvider, HookRegistry
+from strands.hooks import AfterToolCallEvent, HookProvider, HookRegistry
 from strands.models.gemini import GeminiModel
 from strands.tools.executors import SequentialToolExecutor
 
@@ -77,22 +77,6 @@ class StagedToolGuard(HookProvider):
             self.failed = False
 
 
-class ModelCallLimit(HookProvider):
-    """Bound tool loops and API quota independently of model instructions."""
-
-    def __init__(self, maximum=4):
-        self.maximum = maximum
-        self.calls = 0
-
-    def register_hooks(self, registry: HookRegistry):
-        registry.add_callback(BeforeModelCallEvent, self.before_call)
-
-    def before_call(self, event: BeforeModelCallEvent):
-        self.calls += 1
-        if self.calls > self.maximum:
-            raise ValueError("The assistant needed too many tool rounds. Retry your saved message.")
-
-
 def make_agent(prompt, tools=(), *, model=None, hooks=()):
     return Agent(
         model=model if model is not None else FallbackGeminiModel(timeout_seconds=45),
@@ -104,7 +88,7 @@ def make_agent(prompt, tools=(), *, model=None, hooks=()):
 
 async def generate_chat_json(system_prompt, conversation_history, user_text, *,
                              timeout_seconds=None, max_output_tokens=1536, temperature=0.7, tools=(), log_response_on_error=False, response_schema=None):
-    """Run a bounded structured Strands turn for voice and domain services.
+    """Run a structured Strands turn for voice and domain services.
 
     Device and memory effects stay in validated domain services, after complete
     JSON output. No partial model response or failed attempt can execute them.
@@ -118,8 +102,7 @@ async def generate_chat_json(system_prompt, conversation_history, user_text, *,
         temperature=temperature, response_schema=response_schema)
     if tools:
         system_prompt += "\nUse the available tools as needed. After tool use, return ONLY the final JSON object in the documented response format, without markdown."
-    agent = make_agent(system_prompt, tools=tools, model=model,
-                       hooks=[ModelCallLimit(maximum=4 if tools else 1)])
+    agent = make_agent(system_prompt, tools=tools, model=model)
     agent.messages = [{'role': 'user' if m['role'] == 'user' else 'assistant',
                        'content': [{'text': m['text']}]} for m in conversation_history]
     result = await agent.invoke_async(user_text)

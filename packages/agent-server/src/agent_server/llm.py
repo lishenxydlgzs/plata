@@ -14,6 +14,9 @@ _client: genai.Client | None = None
 DEFAULT_MODELS = (
     "gemini-3.5-flash-lite",
     "gemini-3.1-flash-lite",
+    "gemini-3.6-flash",
+    "gemini-3.7-flash",
+    "gemini-3.8-flash",
 )
 FALLBACK_STATUS_CODES = {404, 429, 500, 502, 503, 504}
 DEFAULT_MODEL_TIMEOUT_SECONDS = 8.0

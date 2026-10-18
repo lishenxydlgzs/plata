@@ -281,17 +281,17 @@ async def test_diagnostics_capture_sdk_validation_before_tool_body(chat, caplog)
 
 
 @pytest.mark.asyncio
-async def test_diagnostics_identify_round_limit_and_no_commit(chat, caplog):
+async def test_diagnostics_allow_agent_completion_after_more_than_four_rounds(chat, caplog):
     caplog.set_level('INFO', logger='agent_server.run_diagnostics')
     run, body = make_run(chat)
     events = [e async for e in run.events(body, model=ScriptedModel([
-        {'name': 'list_notes', 'input': {}} for _ in range(4)]))]
-    assert events[-1].type == EventType.RUN_ERROR
+        *[{'name': 'list_notes', 'input': {}} for _ in range(5)],
+        'There are no notes to summarize.']))]
+    assert events[-1].type == EventType.RUN_FINISHED
     logs = diagnostic_events(caplog)
-    assert any(e.get('reason') == 'round_limit' for e in logs)
-    assert logs[-1]['committed'] is False
-    assert chat.session(body.thread_id)['pending']
-    assert len([e for e in logs if e['event'] == 'tool_completed']) == 4
+    assert logs[-1]['committed'] is True
+    assert not chat.session(body.thread_id)['pending']
+    assert len([e for e in logs if e['event'] == 'tool_completed']) == 5
 
 
 def test_diagnostic_error_redacts_unknown_fields_and_exception_text():

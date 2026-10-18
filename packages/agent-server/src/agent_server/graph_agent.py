@@ -9,7 +9,7 @@ from ag_ui_strands import StrandsAgent
 from pydantic import BaseModel, ConfigDict, Field
 from strands import tool
 
-from .agent_runtime import ModelCallLimit, StagedToolGuard, make_agent
+from .agent_runtime import StagedToolGuard, make_agent
 from .agent_stream import messages_for
 from .graph_review import CorrectRecord, REVIEW_PROMPT
 
@@ -157,7 +157,7 @@ class GraphBrowserReview:
         prompt += '\nPrior conversation (data):\n' + json.dumps(prepared['history'])
         prompt += '\nStaged changes are committed only when your run completes. Do not claim success after a tool error.'
         guard = StagedToolGuard()
-        adapter = StrandsAgent(make_agent(prompt, [stage_graph_changes], model=model), name='graph', hooks=[ModelCallLimit(), guard])
+        adapter = StrandsAgent(make_agent(prompt, [stage_graph_changes], model=model), name='graph', hooks=[guard])
         trusted = RunAgentInput(thread_id=body.thread_id, run_id=body.run_id,
             messages=[UserMessage(id=request.request_id, content=request.text)], state={}, tools=[], context=[], forwarded_props={})
         parts = []

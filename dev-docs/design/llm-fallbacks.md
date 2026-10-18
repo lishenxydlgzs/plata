@@ -11,9 +11,16 @@ The default ordered chain is:
 
 1. `gemini-3.5-flash-lite` — normal primary model
 2. `gemini-3.1-flash-lite` — first fallback
-3. `gemini-2.5-flash-lite` — legacy final fallback
+3. `gemini-3.6-flash` — additional Flash fallback
+4. `gemini-3.7-flash` — requested compatibility alias (Google routes it to 3.8)
+5. `gemini-3.8-flash` — final Flash fallback
 
-`GEMINI_MODELS` may override this with a comma-separated ordered list.
+`GEMINI_MODELS` may override this with a comma-separated ordered list. The deployed
+API key's model listing includes all three added IDs and `generateContent` support;
+listing does not prove generation quota or billing access. No live generation calls
+are needed to change the configuration. Google's 3.7 documentation notes that
+3.7 requests route to 3.8, so these entries do not offer independent capacity:
+https://ai.google.dev/gemini-api/docs/models/gemini-3.7-flash
 
 ## Behavior
 
@@ -29,7 +36,8 @@ generation, simple JSON generation, and nightly graph maintenance.
 
 Each model attempt has an eight-second application timeout by default, configurable
 with `GEMINI_MODEL_TIMEOUT_SECONDS`. A timeout advances immediately to the next
-model, keeping the three-model chain within Home Assistant's request window.
+model. Longer configured chains can exceed Home Assistant's request window when
+multiple attempts time out; streaming agents use their existing per-call timeouts.
 
 ## Verification
 

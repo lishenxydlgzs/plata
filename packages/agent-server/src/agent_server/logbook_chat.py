@@ -96,7 +96,7 @@ Read tools must be in their own round, with no write tools. Read a note before
 updating it; preserve relevant content unless the user asks to remove it. For write
 tools still give a natural conversational reply addressing what the parent said;
 mention an edit briefly only when helpful. Avoid routine "Saved and organized"
-receipts as your response. The server delivers your reply only if all writes succeed. Use no more than 4 rounds. You can create multiple notes when useful.
+receipts as your response. The server delivers your reply only if all writes succeed. You can create multiple notes when useful.
 Do not delete or restore unless requested; no automatic sharing.
 
 CONTENT has EXACT fields: title (string), observations (string), author_reflections
@@ -214,7 +214,7 @@ class LogbookChat:
                 return prepared['session']
             payload = prepared['payload']
             allowed, snapshots = prepared['allowed'], prepared['snapshots']
-            for _ in range(4):
+            while True:
                 result = ToolResponse.model_validate(await generate_chat_json(PROMPT, [], json.dumps(payload, ensure_ascii=False)))
                 reads = [c for c in result.tool_calls if c.name in ('read_note', 'list_notes')]
                 if reads:
@@ -232,7 +232,6 @@ class LogbookChat:
                         payload['tool_results'].append({'name': call.name, 'arguments': call.arguments, 'result': output})
                     continue
                 return self.complete(id, request, prepared, result.reply, result.tool_calls)
-            raise ValueError('The assistant needed too many tool rounds. Retry your saved message.')
 
     def _validate(self, calls, allowed, snapshots, directory, user_text):
         operations = []

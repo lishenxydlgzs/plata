@@ -50,7 +50,8 @@ Group by `run_id` for an attempt or `request_id` for all retries of one message.
   field names/types only; unfamiliar names are redacted.
 - `changes_staged` is not a save receipt. Only `commit_succeeded` confirms durable
   completion; `writes: 0` means a conversational response without note changes.
-- `agent_error` with `reason: round_limit` records model-budget exhaustion.
+- `agent_error` with `reason: agent_unavailable` records an unsuccessful agent run;
+  model round counts remain observable without imposing a fixed round cap.
   Inspect earlier tool failures in that run to find the cause.
 - `run_finished` records whether commit happened even when the stream fails or
   closes early. `request_replayed` means an already-completed request was returned

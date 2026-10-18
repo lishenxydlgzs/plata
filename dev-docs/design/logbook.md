@@ -49,8 +49,8 @@ GET/POST /api/logbook/sessions; GET /api/logbook/sessions/{id};
 POST /api/logbook/sessions/{id}/messages with text, request_id, selected_note_id.
 A selected note supplies context while the conversation remains independent.
 The application dispatches validated JSON tool calls using the existing structured
-LLM interface. Read results are passed back into the model. Up to four rounds and
-five calls per round bound work. Write calls are validated as a batch and committed
+LLM interface. Read results are passed back into the model until it returns a final
+response. Five calls per round bound each batch; there is no fixed round cap. Write calls are validated as a batch and committed
 atomically with the assistant response. All updates require a current read snapshot.
 
 Each message supports 8,000 characters; a conversation supports 40,000 characters,

@@ -789,7 +789,8 @@ async def test_context_reset_when_agent_fails(music_service):
     assert "couldn't finish" in service.db.execute('SELECT text FROM outbox').fetchone()[0]
 
 
-async def test_music_authorization_survives_real_strands_executor(music_service, monkeypatch):
+@pytest.mark.parametrize('tool_rounds', [1, 5])
+async def test_music_authorization_survives_real_strands_executor(music_service, monkeypatch, tool_rounds):
     from google.genai import types
     from agent_server import agent_runtime
     from agent_server.modes.chat import ChatHandler
@@ -802,7 +803,9 @@ async def test_music_authorization_survives_real_strands_executor(music_service,
             calls.append(kwargs)
 
             async def stream():
-                if len(calls) == 1:
+                if len(calls) < tool_rounds:
+                    part = types.Part(function_call=types.FunctionCall(name='search_media', args={'query': ''}))
+                elif len(calls) == tool_rounds:
                     part = types.Part(function_call=types.FunctionCall(name='send_music', args={'media_ids': [songs[0].id]}))
                 else:
                     part = types.Part(text='{"reply_text":"Your song is queued.","media_ids":[]}')
@@ -820,7 +823,7 @@ async def test_music_authorization_survives_real_strands_executor(music_service,
 
     service.router.route.side_effect = route
     await receive(service, update(140, 'Send the sample song'))
-    assert len(calls) == 2
+    assert len(calls) == tool_rounds + 1
     assert music_context.get() is None
     rows = service.db.execute('SELECT * FROM outbox ORDER BY id').fetchall()
     assert len(rows) == 2 and json.loads(rows[0]['audio'])[0]['id'] == songs[0].id

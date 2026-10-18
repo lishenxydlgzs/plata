@@ -156,13 +156,16 @@ async def test_real_strands_search_then_answer_over_multiple_children(store, mon
     assert len(store.get_events('learning_event')) == 2  # Retrieved reports were not saved as new reports.
 
 
-async def test_tool_loop_has_a_model_round_limit(store, monkeypatch):
+async def test_tool_loop_finishes_after_more_than_four_rounds(store, monkeypatch):
     async def generate(request):
-        yield function_call({'entity_types': ['person']})
+        if len(calls) <= 5:
+            yield function_call({'entity_types': ['person']})
+        else:
+            yield chunk('{"reply_text":"Finished the search."}')
     calls = fake_client(monkeypatch, generate)
-    with pytest.raises(Exception, match='too many tool rounds'):
-        await agent_runtime.generate_chat_json('Return a JSON response.', [], 'Sample question', tools=[search_tool(store)])
-    assert len(calls) == 4
+    result = await agent_runtime.generate_chat_json('Return a JSON response.', [], 'Sample question', tools=[search_tool(store)])
+    assert result['reply_text'] == 'Finished the search.'
+    assert len(calls) == 6
 
 
 async def test_tool_final_json_fence_is_accepted(store, monkeypatch):

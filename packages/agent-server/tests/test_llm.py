@@ -108,3 +108,23 @@ async def test_structured_generation_can_override_voice_deadline(monkeypatch):
     await llm.generate_chat_json('system', [], 'note', timeout_seconds=45, max_output_tokens=4096)
     assert deadlines == [45]
     assert llm.get_model_timeout_seconds() == 8
+
+
+async def test_default_fallback_chain_reaches_last_flash_model(monkeypatch):
+    monkeypatch.delenv('GEMINI_MODELS', raising=False)
+    expected = ('gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
+                'gemini-3.6-flash', 'gemini-3.7-flash', 'gemini-3.8-flash')
+    assert llm.get_models() == expected
+    calls = []
+
+    class Models:
+        async def generate_content(self, *, model, **kwargs):
+            calls.append(model)
+            if model != expected[-1]:
+                raise TemporaryModelError('busy')
+            return SimpleNamespace(text='{"reply_text":"Recovered"}')
+
+    monkeypatch.setattr(llm, 'get_client', lambda: SimpleNamespace(aio=SimpleNamespace(models=Models())))
+    result = await llm.generate_chat_json('system', [], 'Sample request')
+    assert result['reply_text'] == 'Recovered'
+    assert calls == list(expected)

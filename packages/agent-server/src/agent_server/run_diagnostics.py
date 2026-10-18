@@ -22,7 +22,6 @@ REASONS = {
     'Changes have already been staged for this turn.': 'already_staged',
     'Stage one to five write operations.': 'invalid_write_batch',
     'A note change failed validation. Retry your saved message.': 'tool_validation_failed',
-    'The assistant needed too many tool rounds. Retry your saved message.': 'round_limit',
     'A brief assistant reply is required.': 'empty_reply',
     'Retry the saved message before sending another.': 'pending_request',
 }

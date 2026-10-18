@@ -3,6 +3,10 @@
 ## Agent Server
 
 ### Implemented
+
+- [x] Additional Gemini Flash fallbacks — append 3.6, 3.7 and 3.8 after existing Lite models; preserve ordered environment overrides
+
+- [x] Agent-controlled turn completion — no fixed model-round caps; preserve tool authorization, validation, cancellation and timeouts
 - [x] Schema-constrained song classification — Gemini receives the batch JSON schema, with strict validation before metadata publication
 - [x] Classification failure diagnostics — persistent job logs include parsing/type/schema errors, model context, and bounded rejected response excerpts without conversation history
 - [x] Main-only production deployment — deploy and source sync require the primary checkout on main after worktree changes are committed and merged
@@ -108,7 +112,7 @@
 - [x] Knowledge review feature parity — graph visualization, filters, maintenance conversations, corrections, and action results
 - [x] Household management screens — people, guidance revisions, learning/behavior records, review updates, and memory settings
 - [x] Jobs feature parity — playlist imports, schedule/pause/run controls, history pagination, and execution logs
-- [x] Native conversation ontology search — read-only text/browse queries, multiple people, visible graph links, privacy filtering, and bounded tool/model rounds
+- [x] Native conversation ontology search — read-only text/browse queries, multiple people, visible graph links, privacy filtering, and bounded retrieval calls
 - [x] Strands voice orchestration — Gemini configuration/fallback and unchanged Home Assistant, media, playlist, and timer contracts
 - [x] Migration verification — backend regressions, frontend checks/build, AG-UI integration tests, and desktop/mobile browser checks
 - [x] Self-hosted frontend deployment — asset build/sync, private data preservation, setup and rollback documentation
