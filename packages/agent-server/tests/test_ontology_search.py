@@ -174,3 +174,39 @@ async def test_tool_final_json_fence_is_accepted(store, monkeypatch):
     calls = fake_client(monkeypatch, generate)
     result = await agent_runtime.generate_chat_json('Reply with JSON.', [], 'Hello', tools=[search_tool(store)])
     assert result['reply_text'] == 'A sample reply' and len(calls) == 1
+
+
+@pytest.mark.parametrize('invalid', ['A sample prose response.', '[]'])
+async def test_invalid_tool_response_recovers_without_replaying_search(store, monkeypatch, invalid):
+    async def generate(request):
+        if len(calls) == 1:
+            yield function_call({'entity_types': ['person']})
+        elif len(calls) == 2:
+            yield chunk(invalid)
+        else:
+            assert not request['config'].get('tools')
+            assert request['config']['response_mime_type'] == 'application/json'
+            transcript = json.dumps(request['contents'])
+            assert 'function_response' in transcript
+            assert 'Sample earlier observation' in transcript
+            assert invalid in transcript
+            yield chunk('{"reply_text":"Please clarify the observation.","learning_events":[],"behavior_events":[]}')
+    calls = fake_client(monkeypatch, generate)
+    result = await agent_runtime.generate_chat_json('Return a JSON object.',
+        [{'role': 'user', 'text': 'Sample earlier observation'}], 'Sample follow-up',
+        tools=[search_tool(store)])
+    assert result['learning_events'] == []
+    assert len(calls) == 3
+
+
+async def test_invalid_recovery_is_bounded_and_saves_no_events(store, monkeypatch):
+    from agent_server.modes.chat import FALLBACK_REPLY
+    async def generate(request):
+        yield chunk('Still not JSON')
+    calls = fake_client(monkeypatch, generate)
+    response = await ChatHandler(store).handle(ConversationRequest(
+        text='Sample observation', source='telegram', conversation_id='telegram:sample'), [])
+    assert response.reply_text == FALLBACK_REPLY
+    assert len(calls) == 2
+    assert store.get_events('learning_event') == []
+    assert store.get_events('behavior_event') == []

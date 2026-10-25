@@ -33,6 +33,8 @@
 - [x] Single-mode context-aware design — LLM adapts tone (teaching, play, chat, admin) based on conversation context
 - [x] Multi-turn conversation context — tracks turns per conversation_id, persisted in SQLite
 - [x] Graceful error fallback — returns child-friendly apology on failure
+- [x] Structured conversation recovery — one tool-free JSON continuation preserves search context without replaying tools
+- [x] Structured response diagnostics — correlate model attempts and recovery with stop reasons, token usage, limits and private-text-free parse failures
 - [x] LLM integration (Gemini 3.1 Flash Lite) — generates real responses with child-friendly system prompt
 - [x] LLM fallback chain — retries temporary Gemini availability failures with alternate configured models
 - [x] Response brevity enforcement — system prompt constrains replies to 1-3 short sentences
@@ -54,6 +56,7 @@
 
 ### Planned
 - [ ] Child-safe content filtering — block inappropriate responses
+- [ ] Telegram Log book authoring — authorized note tools with preserved source quotations, visibility and idempotent writes
 - [ ] Deterministic script logic — handle specific commands without LLM (e.g. repeat last answer)
 - [ ] Home Assistant action bridge — trigger HA scripts/automations via REST API
 - [x] Logging and observability — rotating file logs at /home/lishenxydlgzs/logs/agent-server/
