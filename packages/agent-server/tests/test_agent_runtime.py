@@ -172,7 +172,9 @@ async def test_format_recovery_does_not_repeat_durable_tool_effect(monkeypatch):
         if len(calls) == 1:
             yield types.GenerateContentResponse(candidates=[types.Candidate(
                 content=types.Content(role='model', parts=[types.Part(function_call=types.FunctionCall(
-                    name='sample_delivery', args={}))]), finish_reason='STOP')])
+                    name='sample_delivery', args={}))]), finish_reason='STOP')],
+                usage_metadata=types.GenerateContentResponseUsageMetadata(
+                    prompt_token_count=2, candidates_token_count=3, total_token_count=5))
         elif len(calls) == 2:
             assert effects == ['queued']
             yield chunk('The synthetic delivery was queued.')
