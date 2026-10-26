@@ -4,6 +4,9 @@
 
 ### Implemented
 
+- [x] People roles — explicit parent/child assignments, parent-only Telegram pairing and immediate role revocation
+- [x] Telegram Log book authoring — parent-only list/read/create/update tools with source quotations, private defaults and atomic replay-safe writes
+
 - [x] Additional Gemini Flash fallbacks — append 3.6, 3.7 and 3.8 after existing Lite models; preserve ordered environment overrides
 
 - [x] Agent-controlled turn completion — no fixed model-round caps; preserve tool authorization, validation, cancellation and timeouts
@@ -56,7 +59,6 @@
 
 ### Planned
 - [ ] Child-safe content filtering — block inappropriate responses
-- [ ] Telegram Log book authoring — authorized note tools with preserved source quotations, visibility and idempotent writes
 - [ ] Deterministic script logic — handle specific commands without LLM (e.g. repeat last answer)
 - [ ] Home Assistant action bridge — trigger HA scripts/automations via REST API
 - [x] Logging and observability — rotating file logs at /home/lishenxydlgzs/logs/agent-server/

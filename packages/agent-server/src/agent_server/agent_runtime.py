@@ -121,7 +121,7 @@ def make_agent(prompt, tools=(), *, model=None, hooks=()):
 
 
 async def generate_chat_json(system_prompt, conversation_history, user_text, *,
-                             timeout_seconds=None, max_output_tokens=1536, temperature=0.7, tools=(), log_response_on_error=False, response_schema=None):
+                             timeout_seconds=None, max_output_tokens=1536, temperature=0.7, tools=(), log_response_on_error=False, response_schema=None, hooks=()):
     """Run a structured Strands turn for voice and domain services.
 
     Device and memory effects stay in validated domain services, after complete
@@ -139,7 +139,7 @@ async def generate_chat_json(system_prompt, conversation_history, user_text, *,
                 diagnostic_id, len(conversation_history), len(tools))
     if tools:
         system_prompt += "\nUse the available tools as needed. After tool use, return ONLY the final JSON object in the documented response format, without markdown."
-    agent = make_agent(system_prompt, tools=tools, model=model)
+    agent = make_agent(system_prompt, tools=tools, model=model, hooks=hooks)
     agent.messages = [{'role': 'user' if m['role'] == 'user' else 'assistant',
                        'content': [{'text': m['text']}]} for m in conversation_history]
     try:

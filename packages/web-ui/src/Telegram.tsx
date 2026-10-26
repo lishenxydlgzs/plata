@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react'
 import { MessageCircle, CheckCircle, Link, Users } from 'lucide-react';
 import { api, date, errorText } from './api';
 
-type Person = { id: string; name: string };
+type Person = { id: string; name: string; role?: 'parent' | 'child' | null };
 type Account = { user_id: number; person_id: string; label: string; first_reply: number | null; delivery_error: string | null };
 type Invitation = { id: string; person_id: string; expires: number; state: string; user_id: number | null; label: string | null };
 type Status = { configured: boolean; username: string | null; error: string | null; last_poll: number | null;
@@ -30,7 +30,6 @@ export function Telegram() {
   const [status, setStatus] = useState<Status | null>(null);
   const [people, setPeople] = useState<Person[]>([]);
   const [person, setPerson] = useState('');
-  const [newName, setNewName] = useState('');
   const [token, setToken] = useState('');
   const [editingBot, setEditingBot] = useState(false);
   const [acknowledged, setAcknowledged] = useState(false);
@@ -122,9 +121,9 @@ export function Telegram() {
             <div className="telegram-actions"><button disabled={busy} onClick={() => setEditingBot(true)}>Update token or bot</button><button disabled={busy} onClick={() => { if (window.confirm('Disconnect the household bot and revoke all Telegram accounts and invitations? Shared memories will remain.')) void action(async () => { await telegramApi('/bot', 'DELETE'); setLink(null); }); }}>Disconnect bot</button></div>
           </section>}
           <section className="card form-card"><h2>What is shared?</h2><p>{status.memory_notice}</p><p className="small">Use this settings page only on your trusted home network. Anyone with access to the household workspace can manage connections.</p></section>
-          {connected && <form className="card form-card" onSubmit={invite}><h2>2. {hasAccount ? 'Invite a family member' : 'Connect your own account'}</h2><p>Choose who will use this invitation. After they tap Start, confirm their Telegram account below.</p>
-            <label>Household person<select required value={person} onChange={e => { setPerson(e.target.value); setAcknowledged(false); }}><option value="">Choose a person</option>{people.map(p => <option key={p.id} value={p.id} disabled={status.accounts.some(a => a.person_id === p.id)}>{p.name}{status.accounts.some(a => a.person_id === p.id) ? ' — connected' : ''}</option>)}</select></label>
-            <details><summary>Add a household person</summary><label>Name<input value={newName} maxLength={120} onChange={e => setNewName(e.target.value)} placeholder="Sample Person"/></label><button type="button" disabled={busy || !newName.trim()} onClick={() => void action(async () => { const p = await api<Person>('/api/people', 'POST', { name: newName.trim() }); setPerson(p.id); setAcknowledged(false); setNewName(''); })}>Add person</button></details>
+          {connected && <form className="card form-card" onSubmit={invite}><h2>2. {hasAccount ? 'Invite a family member' : 'Connect your own account'}</h2><p>Only parents can connect to Telegram. Assign roles in Household → People, then invite a parent here. Parent accounts can read and write Log book notes, including parent-only notes. After they tap Start, confirm their Telegram account below.</p>
+            <label>Household person<select required value={person} onChange={e => { setPerson(e.target.value); setAcknowledged(false); }}><option value="">Choose a person</option>{people.filter(p => p.role === 'parent').map(p => <option key={p.id} value={p.id} disabled={status.accounts.some(a => a.person_id === p.id)}>{p.name}{status.accounts.some(a => a.person_id === p.id) ? ' — connected' : ''}</option>)}</select></label>
+            <a className="text-link" href="#household">Manage people and roles in Household →</a>
             <label className="telegram-check"><input type="checkbox" checked={acknowledged} onChange={e => setAcknowledged(e.target.checked)}/><span>I understand that messages can enter shared household memory, and will explain this to anyone I invite.</span></label>
             <button className="primary" disabled={busy || !person || !acknowledged}><Link size={16}/>Create invitation</button><p className="small">Single use. Expires in 15 minutes. A new invitation replaces any earlier invitation for this person.</p>
           </form>}
@@ -141,7 +140,7 @@ export function Telegram() {
               <button disabled={busy} onClick={() => void action(async () => { await telegramApi(`/invitations/${i.id}`, 'DELETE'); if (link?.id === i.id) setLink(null); })}>{i.state === 'pending' ? 'Reject request' : 'Remove invitation'}</button>
             </article>)}
           </section>}
-          {connected && <section className="card form-card"><h2><Users size={17}/> Connected accounts</h2>{!hasAccount && <p>Your confirmed accounts will appear here.</p>}{status.accounts.map(a => <article className="telegram-request" key={a.user_id}><h3>{personName(a.person_id)}</h3><p>{a.label}</p><p className="small">{a.first_reply ? `First conversation complete · ${date(a.first_reply)}` : 'Connected. Send a message in Telegram to complete your first conversation.'}</p>{a.delivery_error && <p role="alert" className="error-text">{a.delivery_error}</p>}
+          {connected && <section className="card form-card"><h2><Users size={17}/> Connected accounts</h2>{!hasAccount && <p>Your confirmed accounts will appear here.</p>}{status.accounts.map(a => <article className="telegram-request" key={a.user_id}><h3>{personName(a.person_id)}</h3><p>{a.label}</p>{people.find(p => p.id === a.person_id)?.role !== 'parent' && <p role="status" className="notice">Assign this person the Parent role in Household → People to use Telegram.</p>}<p className="small">{a.first_reply ? `First conversation complete · ${date(a.first_reply)}` : 'Connected. Send a message in Telegram to complete your first conversation.'}</p>{a.delivery_error && <p role="alert" className="error-text">{a.delivery_error}</p>}
             <button disabled={busy} onClick={() => { if (window.confirm(`Disconnect ${personName(a.person_id)} from Telegram? Existing shared memory will remain.`)) void action(async () => { await telegramApi(`/accounts/${a.user_id}`, 'DELETE'); }); }}>Disconnect account</button></article>)}</section>}
           <section className="card form-card"><h2>3. Say hello</h2><p>Once connected, send a normal message to Plata in Telegram.</p><blockquote>Help me think of a rainy-day activity.</blockquote><p>Use <code>/help</code> for capabilities, <code>/new</code> for a fresh chat, or <code>/disconnect</code> to remove access. Starting a fresh chat does not delete shared household memory.</p>{hasReply && <div className="notice"><CheckCircle size={17}/> First conversation complete. You can now invite another family member.</div>}</section>
         </div>

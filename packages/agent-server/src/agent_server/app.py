@@ -9,7 +9,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Depends
 from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -19,7 +19,7 @@ from .journal import JournalService, NewJournal, JournalPatch, EntryRequest
 from .logbook_chat import LogbookChat, ChatRequest
 from .agent_stream import browser_agent_router
 from .graph_agent import GraphBrowserReview
-from .household import GuidanceRequest, PersonRequest, MemorySettings, BehaviorReview
+from .household import GuidanceRequest, PersonRequest, PersonRoleRequest, MemorySettings, BehaviorReview
 from .context import ConversationDB
 from .knowledge import KnowledgeStore
 from .maintenance import MaintenanceJob
@@ -33,7 +33,7 @@ from .models import (
     PlaybackEvent,
 )
 from .router import MessageRouter
-from .telegram import TelegramService, telegram_router
+from .telegram import TelegramService, telegram_router, private_workspace
 from .playlist_sync import PlaylistSync, sync_router, jobs_router, MAINTENANCE_ID
 
 LOG_DIR = Path(os.environ.get("LOG_DIR", "./logs"))
@@ -218,9 +218,23 @@ async def list_people() -> list[dict]:
     return knowledge_store.get_people()
 
 
-@app.post("/api/people")
+@app.post("/api/people", dependencies=[Depends(private_workspace)])
 async def create_person(person: PersonRequest) -> dict:
     return knowledge_store.create_person(person)
+
+
+@app.patch('/api/people/{person_id}/role', dependencies=[Depends(private_workspace)])
+async def set_person_role(person_id: str, body: PersonRoleRequest):
+    try:
+        person = knowledge_store.set_person_role(person_id, body.role)
+    except KeyError:
+        raise HTTPException(404, 'Person not found.') from None
+    if body.role != 'parent' and telegram.db is not None:
+        for row in telegram.db.execute('SELECT user_id FROM accounts WHERE person_id=?', (person_id,)).fetchall():
+            telegram.revoke(row['user_id'])
+        telegram.db.execute('DELETE FROM invites WHERE person_id=?', (person_id,))
+        telegram.db.commit()
+    return person
 
 
 @app.get("/api/learning-events")

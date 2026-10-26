@@ -20,9 +20,10 @@ prompts, tool payloads or arbitrary exception messages are added to these logs.
 Synthetic tests distinguish SDK max-token exceptions from final parse failures and
 verify recovery success/failure, transport fallback and private-text exclusion.
 
-Parent-authored Log book notes are a separate unsupported Telegram capability;
-conversation instructions now explain that limit instead of claiming success or
-substituting event records. Telegram note authoring remains planned.
+Parent-authored Log book notes are now supported separately through native note
+tools for confirmed parents. People roles govern Telegram access; source-backed
+note writes are staged until valid final output and committed idempotently.
+See ../design/telegram-logbook.md.
 
 Reconciled with current main, preserving schema-based classification, explicit
 classification diagnostics, Telegram music delivery and agent-controlled turn

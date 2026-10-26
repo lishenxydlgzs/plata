@@ -1,7 +1,7 @@
 export async function api<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   let response: Response;
   try {
-    response = await fetch(path, { method, headers: { 'Content-Type': 'application/json' },
+    response = await fetch(path, { method, headers: { 'Content-Type': 'application/json', 'X-Plata-Workspace': '1' },
       ...(body !== undefined ? { body: JSON.stringify(body) } : {}) });
   } catch { throw new Error('Cannot reach Plata. Check your connection and try again.'); }
   const data = await response.json().catch(() => null);

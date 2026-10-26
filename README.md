@@ -346,6 +346,21 @@ The legacy `/maintenance/run` endpoint also records history and rejects overlap.
 
 ### Talk to Plata on Telegram
 
+Assign roles in **Household → People** first. Only explicitly assigned **Parent**
+people can be invited, approved or use Telegram; existing people start unassigned.
+Changing a parent to Child or Unassigned disconnects their Telegram account and
+removes pending invitations and queued replies. Parent role changes and person
+creation require `X-Plata-Workspace: 1` from the trusted workspace origin.
+
+Confirmed parents can ask Telegram to list/read Log book notes or create/update a
+note from the current conversation. This includes parent-only notes. New notes
+remain parents-only; these tools cannot delete notes or change sharing. Exact user
+quotations and earlier revisions are preserved. Writes commit only after a valid
+final reply, and repeated Telegram updates do not duplicate a successful write.
+Telegram carries requests and replies; parents-only controls household retrieval,
+not Telegram's access to messages. Workspace note management remains available.
+
+
 You can establish the same connection through the **workspace UI** or **REST API**.
 Both paths use the same stored configuration, invitations, and account permissions;
 a connection created by a coding agent appears immediately in the UI.
@@ -432,7 +447,8 @@ If the intended person is missing, create one and retain the returned `id`:
 curl --fail-with-body --silent --show-error \
   -X POST "$PLATA_URL/api/people" \
   -H 'Content-Type: application/json' \
-  --data '{"name":"Sample Person","aliases":[]}'
+  -H 'X-Plata-Workspace: 1' \
+  --data '{"name":"Sample Person","aliases":[],"role":"parent"}'
 ```
 
 **3. Create an invitation.** Replace `PERSON_ID_FROM_RESPONSE` below with the actual
@@ -497,7 +513,8 @@ bot can still have a transport error; inspect status instead of treating
 | Method and path | Body / result |
 | --- | --- |
 | `GET /api/people` | List profiles and their IDs. |
-| `POST /api/people` | `{"name":"Sample Person","aliases":[]}` → created profile. |
+| `PATCH /api/people/{id}/role` | `{"role":"parent"}` or `"child"` or `null`; workspace header required; demotion disconnects Telegram. |
+| `POST /api/people` | `{"name":"Sample Person","aliases":[],"role":"parent"}` → created profile. |
 | `PUT /api/telegram/bot` | `{"token":"BOT_TOKEN"}` → token-free connection status. |
 | `GET /api/telegram` | Configuration, errors, memory notice, invitations, and accounts. |
 | `POST /api/telegram/invitations` | `{"person_id":"PERSON_ID","shared_memory_acknowledged":true}` → `id`, `url`, `expires`. |

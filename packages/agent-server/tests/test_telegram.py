@@ -48,7 +48,7 @@ async def service(tmp_path):
     router = SimpleNamespace(route=AsyncMock(return_value=ConversationResponse(
         reply_text='Let’s draw a rainy-day map.', mode=ConversationMode.CHAT)))
     knowledge = SimpleNamespace(get_people=lambda: [
-        {'id': 'parent-a', 'name': 'Sample Parent'}, {'id': 'parent-b', 'name': 'Other Parent'}])
+        {'id': 'parent-a', 'name': 'Sample Parent', 'role': 'parent'}, {'id': 'parent-b', 'name': 'Other Parent', 'role': 'parent'}])
     service = TelegramService(router, knowledge, tmp_path / 'telegram' / 'state.db', FakeAPI())
     service.open()
     service.launch = lambda: None
@@ -387,7 +387,7 @@ async def test_headless_api_onboarding_and_cleanup_for_two_people(service, monke
             people = []
             for index, name in enumerate(('Sample Parent', 'Other Parent')):
                 user_id, update_id = 101 + index, index * 10 + 1
-                response = await client.post('/api/people', json={'name': name, 'aliases': []})
+                response = await client.post('/api/people', json={'name': name, 'aliases': [], 'role': 'parent'})
                 assert response.status_code == 200
                 person = response.json()
                 people.append(person)
@@ -458,7 +458,7 @@ async def music_service(service, tmp_path, monkeypatch):
     knowledge.connect()
     service.knowledge = knowledge
     # Pairing uses household data; keep all fixtures synthetic.
-    monkeypatch.setattr(knowledge, 'get_people', lambda: [{'id': 'parent-a', 'name': 'Sample Parent'}])
+    monkeypatch.setattr(knowledge, 'get_people', lambda: [{'id': 'parent-a', 'name': 'Sample Parent', 'role': 'parent'}])
     await pair(service)
     await service.flush()
     service.api.calls.clear()
@@ -751,7 +751,7 @@ async def test_real_chat_handler_uses_channel_tool_without_playback(music_servic
     from agent_server.telegram_music import music_context
     service, context, songs, playlist, _ = music_service
 
-    async def generate(prompt, history, text, *, tools):
+    async def generate(prompt, history, text, *, tools, **kwargs):
         assert 'send_music' in prompt
         upload = next(tool for tool in tools if tool.tool_name == 'send_music')
         result = await upload(media_ids=[playlist.id])

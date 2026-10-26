@@ -36,6 +36,12 @@ class GuidanceRequest(BaseModel):
 class PersonRequest(BaseModel):
     name: Name
     aliases: list[Name] = Field(default_factory=list, max_length=10)
+    role: Literal['parent', 'child'] | None = None
+
+
+class PersonRoleRequest(BaseModel):
+    model_config = ConfigDict(extra='forbid')
+    role: Literal['parent', 'child'] | None
 
 
 class MemorySettings(BaseModel):
@@ -114,11 +120,18 @@ class HouseholdMemory:
                 json.dumps(documents, ensure_ascii=False))
 
     def get_people(self):
-        return [as_dict(e) for e in self.store.query_entities(EntityFilter(entity_type="person"))]
+        return [{**as_dict(e), 'role': e.properties.get('role')} for e in self.store.query_entities(EntityFilter(entity_type="person"))]
 
     def create_person(self, request: PersonRequest):
         return as_dict(self.store.create_entity("person", request.name,
-                       {"aliases": request.aliases}))
+                       {"aliases": request.aliases, 'role': request.role}))
+
+    def set_person_role(self, id, role):
+        person = self.store.get_entity(id)
+        if person is None or person.entity_type != 'person':
+            raise KeyError(id)
+        self.store.update_entity(id, properties={**person.properties, 'role': role})
+        return as_dict(self.store.get_entity(id))
 
     def resolve_person(self, name, person_id=None):
         candidates = self.get_people()

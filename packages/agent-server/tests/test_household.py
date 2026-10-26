@@ -168,7 +168,7 @@ async def test_household_apis(client):
     assert response.status_code == 200
     assert (await client.get("/api/guidance-documents")).json()[0]["content"].startswith("# Kindness")
     assert (await client.post("/api/guidance-documents", json={"document_key": "values", "title": "Values", "content": "  "})).status_code == 422
-    person = (await client.post("/api/people", json={"name": "Sample Child", "aliases": ["Learner"]})).json()
+    person = (await client.post("/api/people", headers={"X-Plata-Workspace": "1"}, json={"name": "Sample Child", "aliases": ["Learner"]})).json()
     assert (await client.get("/api/people")).json()[0]["id"] == person["id"]
     assert (await client.get("/api/learning-events", params={"person_id": person["id"]})).json() == []
     assert (await client.patch("/api/behavior-events/missing", json={"status": "closed", "note": "Reviewed"})).status_code == 404

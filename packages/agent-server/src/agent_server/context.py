@@ -88,6 +88,14 @@ class ConversationDB:
         rows = await cursor.fetchall()
         return [{"role": row[0], "text": row[1]} for row in rows]
 
+    async def note_sources(self, conversation_id: str) -> list[dict]:
+        """Bounded user-only sources for a confirmed Telegram conversation."""
+        assert self._db
+        cursor = await self._db.execute(
+            "SELECT id,text FROM messages WHERE conversation_id=? AND role='user' ORDER BY id DESC LIMIT 20",
+            (conversation_id,))
+        return [{'id': str(row[0]), 'text': row[1]} for row in reversed(await cursor.fetchall())]
+
     async def save_turn(self, conversation_id: str, user_text: str, reply_text: str) -> None:
         assert self._db
         await self._db.execute(
