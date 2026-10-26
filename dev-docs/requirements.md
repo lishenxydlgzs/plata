@@ -4,7 +4,7 @@
 
 ### Implemented
 
-- [x] People roles — explicit parent/child assignments, parent-only Telegram pairing and immediate role revocation
+- [x] People roles — explicit parent/child assignments, role-based Telegram tool permissions and immediate note-access revocation
 - [x] Telegram Log book authoring — parent-only list/read/create/update tools with source quotations, private defaults and atomic replay-safe writes
 
 - [x] Additional Gemini Flash fallbacks — append 3.6, 3.7 and 3.8 after existing Lite models; preserve ordered environment overrides

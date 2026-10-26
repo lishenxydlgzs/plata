@@ -132,25 +132,26 @@ async def test_current_note_version_required_at_commit(parent):
     finally: music_context.reset(binding)
 
 
-async def test_roles_default_unassigned_and_pairing_requires_parent(parent):
+async def test_roles_default_unassigned_and_everyone_can_be_invited(parent):
     service, context, request = parent
     for role in (None, 'child'):
         person = service.knowledge.create_person(PersonRequest(name='Sample Person', role=role))
         assert person['role'] == role
-        with pytest.raises(ValueError, match='parent role'): service.invite(person['id'])
+        assert service.invite(person['id'])['url']
     with pytest.raises(ValueError): PersonRoleRequest(role='administrator')
 
 
-async def test_role_change_between_invitation_and_approval_blocks_pairing(parent):
+async def test_role_change_does_not_block_pairing(parent):
     service, _, _ = parent
     person = service.knowledge.create_person(PersonRequest(name='Other Parent', role='parent'))
     invitation = service.invite(person['id'])
     await receive(service, update(22, '/start ' + invitation['url'].split('=')[1], user=202))
     service.knowledge.set_person_role(person['id'], 'child')
-    with pytest.raises(ValueError, match='Only parents'): service.approve(invitation['id'])
+    service.approve(invitation['id'])
+    assert service.db.execute('SELECT 1 FROM accounts WHERE user_id=202').fetchone()
 
 
-async def test_role_api_boundary_and_demotion_revoke_pairing(parent, monkeypatch):
+async def test_role_api_boundary_and_demotion_preserve_pairing_retire_private_context(parent, monkeypatch):
     from agent_server import app as application
     service, context, request = parent
     monkeypatch.setattr(application, 'knowledge_store', service.knowledge)
@@ -162,7 +163,10 @@ async def test_role_api_boundary_and_demotion_revoke_pairing(parent, monkeypatch
         assert (await client.patch(url, json={'role': 'child'}, headers={**headers, 'Origin': 'https://evil.invalid'})).status_code == 403
         response = await client.patch(url, json={'role': 'child'}, headers=headers)
         assert response.status_code == 200 and response.json()['role'] == 'child'
-        assert not service.db.execute('SELECT 1 FROM accounts').fetchone()
+        account = service.db.execute('SELECT * FROM accounts').fetchone()
+        assert account['user_id'] == context.user_id
+        assert account['conversation_id'] != context.conversation_id
+        assert account['grant_id'] != context.grant_id
         assert not service.db.execute('SELECT 1 FROM outbox').fetchone()
 
 
@@ -198,21 +202,21 @@ async def test_native_note_tools_and_json_recovery_commit_once(parent, monkeypat
     assert not service.knowledge.get_events('learning_event')
 
 
-async def test_nonparent_existing_pairing_never_reaches_agent(parent):
+async def test_nonparent_existing_pairing_keeps_ordinary_chat(parent):
     service, context, _ = parent
     service.knowledge.set_person_role(context.person_id, 'child')
     await receive(service, update(100, 'List the notes'))
-    service.router.route.assert_not_awaited()
+    service.router.route.assert_awaited_once()
     await service.flush()
-    assert any('parents only' in message['text'] for message in service.api.sent)
+    assert any('rainy-day map' in message['text'] for message in service.api.sent)
 
 
-async def test_demoted_parent_queued_private_reply_is_dropped(parent):
+async def test_queued_reply_from_retired_context_is_dropped(parent):
     service, context, _ = parent
     await service.flush(); service.api.sent.clear()
     service.queue(101, 'Synthetic private note response', grant_id=context.grant_id)
     service.db.commit()
-    service.knowledge.set_person_role(context.person_id, None)
+    service.db.execute("UPDATE accounts SET grant_id='retired-context'"); service.db.commit()
     await service.flush()
     assert service.api.sent == []
 
@@ -227,3 +231,28 @@ async def test_source_history_excludes_other_conversations_and_assistant_text():
         assert [s['text'] for s in sources] == ['Sample observation']
         assert sources[0]['id']
     finally: await db.close()
+
+
+async def test_nonparent_ontology_search_cannot_read_even_shared_notes(parent):
+    from agent_server.ontology_search import search_tool
+    from agent_server.journal import JournalPatch
+    notes, _ = await stage(parent); notes.commit('Saved.')
+    id = notes.service.journals.list()[0]['id']
+    notes.service.journals.patch(id, JournalPatch(visibility='family'))
+    lookup = search_tool(parent[0].knowledge, notes_allowed=notes.authorized)
+    assert (await lookup(entity_types=['journal']))['records']
+    parent[0].knowledge.set_person_role(parent[1].person_id, 'child')
+    assert (await lookup(entity_types=['journal']))['records'] == []
+
+
+async def test_note_tool_results_do_not_enter_shared_memory(parent, monkeypatch):
+    from agent_server.modes import chat
+    async def generate(prompt, history, text, **kwargs):
+        tool = next(t for t in kwargs['tools'] if t.tool_name == 'list_notes')
+        await tool()
+        return {'reply_text': 'Here are the notes.', 'facts': [{'subject': 'Synthetic private material'}],
+                'topics': ['private-topic'], 'learning_events': [], 'behavior_events': []}
+    monkeypatch.setattr(chat, 'generate_chat_json', generate)
+    response = await chat.ChatHandler(parent[0].knowledge).handle(parent[2], [])
+    assert response.reply_text == 'Here are the notes.'
+    assert not parent[0].knowledge.store._db.execute("SELECT 1 FROM entities WHERE entity_type IN ('message','fact','topic')").fetchone()

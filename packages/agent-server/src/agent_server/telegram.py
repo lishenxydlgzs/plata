@@ -261,8 +261,6 @@ class TelegramService:
             raise ValueError("Connect your household bot first.")
         if not any(p["id"] == person_id for p in self.knowledge.get_people()):
             raise ValueError("Choose a household person first.")
-        if not self.is_parent(person_id):
-            raise ValueError('Only a person assigned the parent role can connect to Telegram. Set their role in People first.')
         if self.db.execute("SELECT 1 FROM accounts WHERE person_id=?", (person_id,)).fetchone():
             raise ValueError("This person is already connected. Disconnect their account before connecting another.")
         token, id = secrets.token_urlsafe(24), uuid.uuid4().hex
@@ -285,8 +283,6 @@ class TelegramService:
             raise ValueError("This connection request expired or is no longer pending. Create a new invitation.")
         if not any(p["id"] == row["person_id"] for p in self.knowledge.get_people()):
             raise ValueError("This household person no longer exists.")
-        if not self.is_parent(row['person_id']):
-            raise ValueError('Only parents can connect to Telegram. Update the person role in People first.')
         try:
             self.db.execute("INSERT INTO accounts(user_id,chat_id,person_id,label,conversation_id,grant_id) VALUES(?,?,?,?,?,?)",
                             (row["user_id"], row["chat_id"], row["person_id"], row["label"], f"telegram:{uuid.uuid4().hex}", uuid.uuid4().hex))
@@ -341,9 +337,6 @@ class TelegramService:
             self.queue(chat_id, "Waiting for the household owner to confirm your account in Plata → Connections." if pending else
                        "You need a household invitation to connect to Plata. Ask the household owner to open Connections → Telegram.")
             return
-        if not self.is_parent(account['person_id']):
-            self.queue(chat_id, 'Telegram is available to parents only. Ask the household owner to assign your role in People.')
-            return
         if command in {"/start", "/help"}:
             self.queue(chat_id, WELCOME)
         elif command == "/new":
@@ -363,8 +356,8 @@ class TelegramService:
                     person_id=account["person_id"], language=sender.get("language_code", "en")))
             finally:
                 music_context.reset(binding)
-            if (self.is_parent(account['person_id']) and self.db.execute(
-                    'SELECT 1 FROM accounts WHERE user_id=? AND grant_id=?', (user_id, account['grant_id'])).fetchone()):
+            if self.db.execute(
+                    'SELECT 1 FROM accounts WHERE user_id=? AND grant_id=?', (user_id, account['grant_id'])).fetchone():
                 self.queue(chat_id, response.reply_text, first_reply=True, grant_id=account['grant_id'])
 
     def ingest(self, updates):
@@ -405,7 +398,7 @@ class TelegramService:
         account = self.db.execute(
             "SELECT * FROM accounts WHERE user_id=? AND chat_id=? AND grant_id=? AND person_id=? AND conversation_id=?",
             (context.user_id, context.chat_id, context.grant_id, context.person_id, context.conversation_id)).fetchone()
-        if not account or not self.config() or not self.is_parent(context.person_id):
+        if not account or not self.config():
             raise ValueError('Telegram account is no longer authorized.')
         MusicSelection(media_ids=media_ids)
         # Deduplicate identical calls even after successful delivery of the jobs.
@@ -456,7 +449,7 @@ class TelegramService:
             if row['grant_id']:
                 account = self.db.execute('SELECT person_id FROM accounts WHERE chat_id=? AND grant_id=?',
                                           (row['chat_id'], row['grant_id'])).fetchone()
-                if not account or not self.is_parent(account['person_id']):
+                if not account:
                     self.db.execute('DELETE FROM outbox WHERE id=?', (row['id'],))
                     self.db.commit()
                     continue

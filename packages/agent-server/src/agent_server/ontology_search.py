@@ -56,8 +56,9 @@ def bounded(value):
 
 
 class OntologySearch:
-    def __init__(self, knowledge):
+    def __init__(self, knowledge, notes_allowed=None):
         self.knowledge = knowledge
+        self.notes_allowed = notes_allowed or (lambda: True)
 
     def snapshot(self):
         db = self.knowledge.store._db
@@ -69,7 +70,7 @@ class OntologySearch:
         records = {}
         revision_aliases = {}
         journals = JournalService(self.knowledge)
-        kinds = (*FIELDS, 'journal')
+        kinds = (*FIELDS, *(('journal',) if self.notes_allowed() else ()))
         placeholders = ','.join('?' for _ in kinds)
         for row in db.execute(f'SELECT * FROM entities WHERE entity_type IN ({placeholders})', kinds):
             kind = row['entity_type']
@@ -162,9 +163,9 @@ class OntologySearch:
                 'note': 'Text fields are limited to 2,000 characters. Reports are not verified facts.'}
 
 
-def search_tool(knowledge):
+def search_tool(knowledge, notes_allowed=None):
     """One read-only tool instance and budget per user turn, never a global counter."""
-    search = OntologySearch(knowledge)
+    search = OntologySearch(knowledge, notes_allowed=notes_allowed)
     calls = 0
 
     @tool
@@ -187,6 +188,8 @@ def search_tool(knowledge):
             return {'error': 'Search budget exhausted. Answer using gathered evidence and disclose remaining gaps.', 'scope': SCOPE}
         result = search.search(query=query, entity_types=entity_types or [], person_ids=person_ids or [],
                                entity_ids=entity_ids or [], limit=limit, offset=offset)
+        if not search.notes_allowed():
+            result['scope'] = 'Shared household records only. Log book notes require an authorized parent account.'
         logger.info('Ontology search completed: records=%d error=%s', len(result.get('records', [])), 'error' in result)
         return result
 

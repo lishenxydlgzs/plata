@@ -346,10 +346,11 @@ The legacy `/maintenance/run` endpoint also records history and rejects overlap.
 
 ### Talk to Plata on Telegram
 
-Assign roles in **Household → People** first. Only explicitly assigned **Parent**
-people can be invited, approved or use Telegram; existing people start unassigned.
-Changing a parent to Child or Unassigned disconnects their Telegram account and
-removes pending invitations and queued replies. Parent role changes and person
+Assign roles in **Household → People** first. Everyone can connect to Telegram, including Child and Unassigned people. Existing
+people start unassigned. Only confirmed people with the **Parent** role may use
+Log book tools. Changing a parent to Child or Unassigned keeps the pairing but
+starts a fresh Telegram conversation and clears pending replies to protect private
+note context. Parent role changes and person
 creation require `X-Plata-Workspace: 1` from the trusted workspace origin.
 
 Confirmed parents can ask Telegram to list/read Log book notes or create/update a
@@ -513,7 +514,7 @@ bot can still have a transport error; inspect status instead of treating
 | Method and path | Body / result |
 | --- | --- |
 | `GET /api/people` | List profiles and their IDs. |
-| `PATCH /api/people/{id}/role` | `{"role":"parent"}` or `"child"` or `null`; workspace header required; demotion disconnects Telegram. |
+| `PATCH /api/people/{id}/role` | `{"role":"parent"}` or `"child"` or `null`; workspace header required; demotion retires private Telegram context while keeping the pairing. |
 | `POST /api/people` | `{"name":"Sample Person","aliases":[],"role":"parent"}` → created profile. |
 | `PUT /api/telegram/bot` | `{"token":"BOT_TOKEN"}` → token-free connection status. |
 | `GET /api/telegram` | Configuration, errors, memory notice, invitations, and accounts. |

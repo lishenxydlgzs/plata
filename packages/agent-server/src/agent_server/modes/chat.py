@@ -146,9 +146,11 @@ association directory IDs; read_note supplies existing content. Read before upda
 Preserve earlier observations and exact quotations when extending a note. New notes
 are parents-only; Telegram itself still carries these messages. Leave author_reflections
 empty unless the user supplies a reflection. Do not turn your suggestions into their words.
-Note writes are staged until the final response succeeds. Do not also emit a learning
-or behavior event for the same observation unless the user requests both kinds of record.
-If note tools are unavailable, ask the owner to assign the parent role in Household → People and confirm Telegram access
+Note writes are staged until the final response succeeds. Turns using note tools
+do not write shared facts, topics or learning/behavior events. Leave those fields
+empty so parent-only notes do not leak into shared memory. If the user also wants
+a shared report, ask them to report it separately after completing the note task.
+If note tools are unavailable, explain that they require a parent role in Household → People
 or use the workspace Log book. Never claim a note was saved without a successful tool
 result or silently substitute an event. Clarify ambiguous note targets conversationally.
 Use no more than three tool rounds before answering; you have six search calls.
@@ -251,10 +253,16 @@ class ChatHandler:
         note_tools = notes.tools()
         try:
             result = await generate_chat_json(
-                system_prompt, history, request.text, tools=[search_tool(self._knowledge), media_search_tool(self._knowledge),
+                system_prompt, history, request.text, tools=[search_tool(self._knowledge,
+                    notes_allowed=notes.authorized if request.source == 'telegram' else None), media_search_tool(self._knowledge),
                        *telegram_music_tools(request), *note_tools],
                 **({'hooks': [notes], 'max_output_tokens': 4096, 'timeout_seconds': 45.0} if note_tools else {}))
             result['reply_text'] = notes.commit(result.get('reply_text'))
+            if notes.prepared:
+                # Note-tool context may contain parent-only content. Keep it out of
+                # automatic shared-memory extraction, including on read-only turns.
+                return ConversationResponse(reply_text=result.get('reply_text') or FALLBACK_REPLY,
+                    mode=ConversationMode.CHAT, continue_conversation=True)
         except Exception:
             logger.exception("LLM generation failed")
             return ConversationResponse(

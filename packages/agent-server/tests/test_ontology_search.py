@@ -149,7 +149,7 @@ async def test_real_strands_search_then_answer_over_multiple_children(store, mon
             yield chunk('{"reply_text":"The available reports describe practice with taking turns; parent-only notes are unavailable here.","facts":[],"learning_events":[],"behavior_events":[]}')
     calls = fake_client(monkeypatch, generate)
     response = await ChatHandler(store).handle(ConversationRequest(text='What should our children work on?',
-                                              conversation_id='telegram:sample', source='telegram'), [])
+                                              conversation_id='sample-shared-conversation', source='assist'), [])
     assert response.reply_text.startswith('The available reports')
     assert response.actions == []
     assert len(calls) == 2

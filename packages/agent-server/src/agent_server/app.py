@@ -230,9 +230,13 @@ async def set_person_role(person_id: str, body: PersonRoleRequest):
     except KeyError:
         raise HTTPException(404, 'Person not found.') from None
     if body.role != 'parent' and telegram.db is not None:
-        for row in telegram.db.execute('SELECT user_id FROM accounts WHERE person_id=?', (person_id,)).fetchall():
-            telegram.revoke(row['user_id'])
-        telegram.db.execute('DELETE FROM invites WHERE person_id=?', (person_id,))
+        # Keep pairing, but retire the private conversation context and pending replies.
+        import uuid
+        for row in telegram.db.execute('SELECT user_id,chat_id,grant_id FROM accounts WHERE person_id=?', (person_id,)).fetchall():
+            telegram.db.execute('DELETE FROM outbox WHERE chat_id=?', (row['chat_id'],))
+            telegram.db.execute('DELETE FROM music_requests WHERE grant_id=?', (row['grant_id'],))
+            telegram.db.execute('UPDATE accounts SET conversation_id=?,grant_id=? WHERE user_id=?',
+                                (f'telegram:{uuid.uuid4().hex}', uuid.uuid4().hex, row['user_id']))
         telegram.db.commit()
     return person
 
